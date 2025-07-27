@@ -1,3 +1,8 @@
+
 glacial-lake-detection-BAH-2025-venv/ 
 .gitignore 
-data/ 
+data
+.venv/
+glacial-lake-detection-BAH-2025-venv/ 
+Resources/
+
