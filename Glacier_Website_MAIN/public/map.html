@@ -1,0 +1,335 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Interactive Map - GlacierWatch</title>
+    <link rel="stylesheet" href="css/map.css">
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css">
+    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+</head>
+<body>
+    <!-- Header -->
+    <header class="header">
+        <div class="container">
+            <div class="nav-brand">
+                <div class="logo">
+                    <i class="fas fa-snowflake"></i>
+                    <span>GlacierWatch</span>
+                </div>
+            </div>
+            <nav class="nav-menu">
+                <a href="/" class="nav-link">Home</a>
+                <a href="/map" class="nav-link active">Map</a>
+                <a href="#reports" class="nav-link">Reports</a>
+                <a href="#data" class="nav-link">Data</a>
+                <a href="#about" class="nav-link">About</a>
+                <a href="#contact" class="nav-link">Contact</a>
+            </nav>
+            <div class="search-container">
+                <input type="text" placeholder="Search locations..." class="search-input" id="searchInput">
+                <i class="fas fa-search search-icon"></i>
+            </div>
+        </div>
+    </header>
+
+    <div class="map-container">
+        <!-- Left Sidebar - Map Layers -->
+        <div class="sidebar left-sidebar" id="layersSidebar">
+            <div class="sidebar-header">
+                <h3><i class="fas fa-layer-group"></i> Map Layers</h3>
+                <button class="sidebar-toggle" id="layersToggle">
+                    <i class="fas fa-chevron-left"></i>
+                </button>
+            </div>
+            
+            <div class="sidebar-content">
+                <!-- Base Layers -->
+                <div class="layer-group">
+                    <div class="layer-group-header">
+                        <i class="fas fa-map"></i>
+                        <span>Base Layers</span>
+                        <i class="fas fa-chevron-down toggle-icon"></i>
+                    </div>
+                    <div class="layer-group-content">
+                        <label class="layer-item">
+                            <input type="radio" name="baseLayer" value="satellite" id="satelliteLayer">
+                            <span>Satellite</span>
+                        </label>
+                        <label class="layer-item">
+                            <input type="radio" name="baseLayer" value="terrain" id="terrainLayer">
+                            <span>Terrain</span>
+                        </label>
+                        <label class="layer-item">
+                            <input type="radio" name="baseLayer" value="hybrid" id="hybridLayer" checked>
+                            <span>Hybrid</span>
+                        </label>
+                    </div>
+                </div>
+
+                <!-- Glacial Features -->
+                <div class="layer-group">
+                    <div class="layer-group-header">
+                        <i class="fas fa-snowflake"></i>
+                        <span>Glacial Features</span>
+                        <i class="fas fa-chevron-down toggle-icon"></i>
+                    </div>
+                    <div class="layer-group-content">
+                        <label class="layer-item">
+                            <input type="checkbox" id="glacialLakesLayer" checked>
+                            <span>Glacial Lakes</span>
+                        </label>
+                        <label class="layer-item">
+                            <input type="checkbox" id="glaciersLayer">
+                            <span>Glaciers</span>
+                        </label>
+                        <label class="layer-item">
+                            <input type="checkbox" id="morainesLayer">
+                            <span>Moraines</span>
+                        </label>
+                    </div>
+                </div>
+
+                <!-- Administrative -->
+                <div class="layer-group">
+                    <div class="layer-group-header">
+                        <i class="fas fa-map-marked-alt"></i>
+                        <span>Administrative</span>
+                        <i class="fas fa-chevron-down toggle-icon"></i>
+                    </div>
+                    <div class="layer-group-content">
+                        <label class="layer-item">
+                            <input type="checkbox" id="countriesLayer">
+                            <span>Countries</span>
+                        </label>
+                        <label class="layer-item">
+                            <input type="checkbox" id="statesLayer">
+                            <span>States</span>
+                        </label>
+                        <label class="layer-item">
+                            <input type="checkbox" id="districtsLayer">
+                            <span>Districts</span>
+                        </label>
+                    </div>
+                </div>
+
+                <!-- Hydrology -->
+                <div class="layer-group">
+                    <div class="layer-group-header">
+                        <i class="fas fa-water"></i>
+                        <span>Hydrology</span>
+                        <i class="fas fa-chevron-down toggle-icon"></i>
+                    </div>
+                    <div class="layer-group-content">
+                        <label class="layer-item">
+                            <input type="checkbox" id="riversLayer" checked>
+                            <span>Rivers</span>
+                        </label>
+                        <label class="layer-item">
+                            <input type="checkbox" id="streamsLayer">
+                            <span>Streams</span>
+                        </label>
+                        <label class="layer-item">
+                            <input type="checkbox" id="watershedsLayer">
+                            <span>Watersheds</span>
+                        </label>
+                    </div>
+                </div>
+
+                <!-- Analysis Tools -->
+                <div class="analysis-tools">
+                    <h4>Analysis Tools</h4>
+                    <button class="tool-button" id="measureDistanceBtn">
+                        <i class="fas fa-ruler"></i>
+                        <span>Measure Distance</span>
+                    </button>
+                    <button class="tool-button" id="measureAreaBtn">
+                        <i class="fas fa-vector-square"></i>
+                        <span>Measure Area</span>
+                    </button>
+                    <button class="tool-button" id="exportDataBtn">
+                        <i class="fas fa-download"></i>
+                        <span>Export Data</span>
+                    </button>
+                </div>
+            </div>
+        </div>
+
+        <!-- Map -->
+        <div class="map-wrapper">
+            <div id="map"></div>
+            
+            <!-- Map Controls -->
+            <div class="map-controls">
+                <button class="control-btn" id="zoomInBtn" title="Zoom In">
+                    <i class="fas fa-plus"></i>
+                </button>
+                <button class="control-btn" id="zoomOutBtn" title="Zoom Out">
+                    <i class="fas fa-minus"></i>
+                </button>
+                <button class="control-btn" id="homeBtn" title="Home">
+                    <i class="fas fa-home"></i>
+                </button>
+                <button class="control-btn" id="fullscreenBtn" title="Fullscreen">
+                    <i class="fas fa-expand"></i>
+                </button>
+            </div>
+
+            <!-- Coordinates Display -->
+            <div class="coordinates-display">
+                <span id="coordinates">45.2345° N, 82.1234° E</span>
+                <span class="scale">Scale: 1:50,000</span>
+                <span class="data-source">Data: ISRO, NRSC</span>
+            </div>
+        </div>
+
+        <!-- Right Sidebar - Information Panel -->
+        <div class="sidebar right-sidebar" id="infoPanelSidebar">
+            <div class="sidebar-header">
+                <div class="tab-buttons">
+                    <button class="tab-button active" data-tab="information">
+                        <i class="fas fa-info-circle"></i>
+                        Information
+                    </button>
+                    <button class="tab-button" data-tab="analysis">
+                        <i class="fas fa-chart-bar"></i>
+                        Analysis
+                    </button>
+                    <button class="tab-button" data-tab="reports">
+                        <i class="fas fa-file-alt"></i>
+                        Reports
+                    </button>
+                </div>
+                <button class="sidebar-toggle" id="infoToggle">
+                    <i class="fas fa-chevron-right"></i>
+                </button>
+            </div>
+
+            <div class="sidebar-content">
+                <!-- Information Tab -->
+                <div class="tab-content active" id="informationTab">
+                    <div class="feature-info" id="selectedFeatureInfo">
+                        <h4>Selected Feature</h4>
+                        <div class="info-item">
+                            <span class="info-label">Lake ID</span>
+                            <span class="info-value" id="lakeId">GL-2024-001</span>
+                        </div>
+                        <div class="info-item">
+                            <span class="info-label">Name</span>
+                            <span class="info-value" id="lakeName">Rakshasa Tal</span>
+                        </div>
+                        <div class="info-item">
+                            <span class="info-label">Elevation</span>
+                            <span class="info-value" id="lakeElevation">4,520 m</span>
+                        </div>
+                        <div class="info-item">
+                            <span class="info-label">Area</span>
+                            <span class="info-value" id="lakeArea">0.85 km²</span>
+                        </div>
+                        <div class="info-item">
+                            <span class="info-label">Volume</span>
+                            <span class="info-value" id="lakeVolume">12.3 million m³</span>
+                        </div>
+                    </div>
+
+                    <div class="risk-assessment">
+                        <h4>Risk Assessment</h4>
+                        <div class="risk-level moderate">
+                            <i class="fas fa-exclamation-triangle"></i>
+                            <span>Moderate Risk Level</span>
+                        </div>
+                        <p class="risk-description">
+                            Based on current monitoring data, this lake shows moderate risk of outburst. Regular monitoring recommended.
+                        </p>
+                        <button class="detailed-assessment-btn">View Detailed Assessment</button>
+                    </div>
+
+                    <div class="download-section">
+                        <h4>Download Data</h4>
+                        <div class="download-item">
+                            <div class="download-info">
+                                <i class="fas fa-file-archive"></i>
+                                <span>Shapefile</span>
+                            </div>
+                            <span class="file-size">2.4 MB</span>
+                            <button class="download-btn" data-format="shapefile">
+                                <i class="fas fa-download"></i>
+                            </button>
+                        </div>
+                        <div class="download-item">
+                            <div class="download-info">
+                                <i class="fas fa-code"></i>
+                                <span>GeoJSON</span>
+                            </div>
+                            <span class="file-size">1.8 MB</span>
+                            <button class="download-btn" data-format="geojson">
+                                <i class="fas fa-download"></i>
+                            </button>
+                        </div>
+                        <div class="download-item">
+                            <div class="download-info">
+                                <i class="fas fa-file-pdf"></i>
+                                <span>PDF Report</span>
+                            </div>
+                            <span class="file-size">3.2 MB</span>
+                            <button class="download-btn" data-format="pdf">
+                                <i class="fas fa-download"></i>
+                            </button>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Analysis Tab -->
+                <div class="tab-content" id="analysisTab">
+                    <div class="chart-container">
+                        <h4>Lake Volume Trend</h4>
+                        <canvas id="volumeChart"></canvas>
+                    </div>
+                    <div class="chart-container">
+                        <h4>Risk Distribution</h4>
+                        <canvas id="riskChart"></canvas>
+                    </div>
+                </div>
+
+                <!-- Reports Tab -->
+                <div class="tab-content" id="reportsTab">
+                    <div class="reports-list">
+                        <h4>Available Reports</h4>
+                        <div class="report-item">
+                            <div class="report-info">
+                                <h5>Monthly Assessment</h5>
+                                <p>January 2024</p>
+                            </div>
+                            <button class="report-download-btn" data-report="monthly-jan-2024.pdf">
+                                <i class="fas fa-download"></i>
+                            </button>
+                        </div>
+                        <div class="report-item">
+                            <div class="report-info">
+                                <h5>Risk Analysis</h5>
+                                <p>December 2023</p>
+                            </div>
+                            <button class="report-download-btn" data-report="risk-analysis-dec-2023.pdf">
+                                <i class="fas fa-download"></i>
+                            </button>
+                        </div>
+                        <div class="report-item">
+                            <div class="report-info">
+                                <h5>Annual Summary</h5>
+                                <p>2023</p>
+                            </div>
+                            <button class="report-download-btn" data-report="annual-summary-2023.pdf">
+                                <i class="fas fa-download"></i>
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script src="js/map.js"></script>
+</body>
+</html>

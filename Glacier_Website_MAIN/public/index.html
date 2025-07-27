@@ -1,0 +1,217 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>GlacierWatch - Glacial Lake Monitoring</title>
+    <link rel="stylesheet" href="css/style.css">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css">
+</head>
+<body>
+    <!-- Header -->
+    <header class="header">
+        <div class="container">
+            <div class="nav-brand">
+                <div class="logo">
+                    <i class="fas fa-snowflake"></i>
+                    <span>GlacierWatch</span>
+                </div>
+            </div>
+            <nav class="nav-menu">
+                <a href="/" class="nav-link active">Home</a>
+                <a href="/map" class="nav-link">Map</a>
+                <a href="#reports" class="nav-link">Reports</a>
+                <a href="#data" class="nav-link">Data</a>
+                <a href="#about" class="nav-link">About</a>
+                <a href="#contact" class="nav-link">Contact</a>
+            </nav>
+            <div class="search-container">
+                <input type="text" placeholder="Search locations..." class="search-input">
+                <i class="fas fa-search search-icon"></i>
+            </div>
+        </div>
+    </header>
+
+    <!-- Hero Section -->
+    <section class="hero">
+        <div class="hero-content">
+            <h1 class="hero-title">Monitor Glacial Lakes in Real-Time</h1>
+            <p class="hero-subtitle">Advanced geospatial analysis for critical environmental monitoring</p>
+            <a href="/map" class="cta-button">
+                <i class="fas fa-map"></i>
+                Explore Interactive Map
+            </a>
+        </div>
+        <div class="hero-background"></div>
+    </section>
+
+    <!-- Statistics Section -->
+    <section class="stats-section">
+        <div class="container">
+            <div class="stats-grid">
+                <div class="stat-card">
+                    <div class="stat-number" data-target="2500">0</div>
+                    <div class="stat-label">Lakes Monitored</div>
+                </div>
+                <div class="stat-card">
+                    <div class="stat-number" data-target="85000">0</div>
+                    <div class="stat-label">km² Coverage</div>
+                </div>
+                <div class="stat-card">
+                    <div class="stat-number" data-target="150">0</div>
+                    <div class="stat-label">Critical Zones</div>
+                </div>
+            </div>
+        </div>
+    </section>
+
+    <!-- River Basins Section -->
+    <section class="basins-section">
+        <div class="container">
+            <h2 class="section-title">Major River Basins</h2>
+            <div class="basins-grid">
+                <div class="basin-card">
+                    <div class="basin-image">
+                        <img src="https://images.unsplash.com/photo-1506905925346-21bda4d32df4?w=400&h=250&fit=crop" alt="Indus Basin">
+                        <div class="basin-overlay">
+                            <h3>Indus Basin</h3>
+                        </div>
+                    </div>
+                    <div class="basin-info">
+                        <div class="basin-stats">
+                            <div class="basin-stat">
+                                <span class="stat-value">850</span>
+                                <span class="stat-name">Lakes</span>
+                            </div>
+                            <div class="basin-stat">
+                                <span class="stat-value">45,000 km²</span>
+                                <span class="stat-name">Area</span>
+                            </div>
+                        </div>
+                        <a href="/map?basin=indus" class="basin-button">View on Map</a>
+                    </div>
+                </div>
+                <div class="basin-card">
+                    <div class="basin-image">
+                        <img src="https://images.unsplash.com/photo-1544735716-392fe2489ffa?w=400&h=250&fit=crop" alt="Ganga Basin">
+                        <div class="basin-overlay">
+                            <h3>Ganga Basin</h3>
+                        </div>
+                    </div>
+                    <div class="basin-info">
+                        <div class="basin-stats">
+                            <div class="basin-stat">
+                                <span class="stat-value">920</span>
+                                <span class="stat-name">Lakes</span>
+                            </div>
+                            <div class="basin-stat">
+                                <span class="stat-value">32,000 km²</span>
+                                <span class="stat-name">Area</span>
+                            </div>
+                        </div>
+                        <a href="/map?basin=ganga" class="basin-button">View on Map</a>
+                    </div>
+                </div>
+                <div class="basin-card">
+                    <div class="basin-image">
+                        <img src="https://images.unsplash.com/photo-1571115764595-644a1f56a55c?w=400&h=250&fit=crop" alt="Brahmaputra Basin">
+                        <div class="basin-overlay">
+                            <h3>Brahmaputra Basin</h3>
+                        </div>
+                    </div>
+                    <div class="basin-info">
+                        <div class="basin-stats">
+                            <div class="basin-stat">
+                                <span class="stat-value">730</span>
+                                <span class="stat-name">Lakes</span>
+                            </div>
+                            <div class="basin-stat">
+                                <span class="stat-value">28,000 km²</span>
+                                <span class="stat-name">Area</span>
+                            </div>
+                        </div>
+                        <a href="/map?basin=brahmaputra" class="basin-button">View on Map</a>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </section>
+
+    <!-- Features Section -->
+    <section class="features-section">
+        <div class="container">
+            <h2 class="section-title">Key Features</h2>
+            <div class="features-grid">
+                <div class="feature-card">
+                    <div class="feature-icon">
+                        <i class="fas fa-chart-line"></i>
+                    </div>
+                    <h3>Real-time Monitoring</h3>
+                    <p>Continuous tracking of glacial lake changes and movements</p>
+                </div>
+                <div class="feature-card">
+                    <div class="feature-icon">
+                        <i class="fas fa-exclamation-triangle"></i>
+                    </div>
+                    <h3>Risk Assessment</h3>
+                    <p>Advanced analysis of potential flood risks and hazards</p>
+                </div>
+                <div class="feature-card">
+                    <div class="feature-icon">
+                        <i class="fas fa-chart-bar"></i>
+                    </div>
+                    <h3>Data Analysis</h3>
+                    <p>Comprehensive tools for data visualization and interpretation</p>
+                </div>
+                <div class="feature-card">
+                    <div class="feature-icon">
+                        <i class="fas fa-file-alt"></i>
+                    </div>
+                    <h3>Report Generation</h3>
+                    <p>Automated generation of detailed analysis reports</p>
+                </div>
+            </div>
+        </div>
+    </section>
+
+    <!-- Footer -->
+    <footer class="footer">
+        <div class="container">
+            <div class="footer-content">
+                <div class="footer-section">
+                    <h3>About GlacierWatch</h3>
+                    <p>Advanced monitoring system for glacial lake analysis and risk assessment.</p>
+                </div>
+                <div class="footer-section">
+                    <h3>Quick Links</h3>
+                    <ul>
+                        <li><a href="/map">Interactive Map</a></li>
+                        <li><a href="#data">Data Analysis</a></li>
+                        <li><a href="#reports">Reports</a></li>
+                        <li><a href="#docs">Documentation</a></li>
+                    </ul>
+                </div>
+                <div class="footer-section">
+                    <h3>Resources</h3>
+                    <ul>
+                        <li><a href="#api">API Documentation</a></li>
+                        <li><a href="#downloads">Download Data</a></li>
+                        <li><a href="#case-studies">Case Studies</a></li>
+                        <li><a href="#support">Support</a></li>
+                    </ul>
+                </div>
+                <div class="footer-section">
+                    <h3>Contact</h3>
+                    <p>Email: info@glacierwatch.org</p>
+                    <p>Phone: +1 (555) 123-4567</p>
+                </div>
+            </div>
+            <div class="footer-bottom">
+                <p>&copy; 2024 GlacierWatch. All rights reserved.</p>
+            </div>
+        </div>
+    </footer>
+
+    <script src="js/main.js"></script>
+</body>
+</html>
