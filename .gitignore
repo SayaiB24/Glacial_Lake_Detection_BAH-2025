@@ -5,4 +5,6 @@ data
 .venv/
 glacial-lake-detection-BAH-2025-venv/ 
 Resources/
-
+notebooks/.ipynb_checkpoints/
+notebooks/best_model.pth
+notebooks/best_model_attention.pth
