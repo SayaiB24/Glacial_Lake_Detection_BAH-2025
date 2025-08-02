@@ -8,3 +8,5 @@ Resources/
 notebooks/.ipynb_checkpoints/
 notebooks/best_model.pth
 notebooks/best_model_attention.pth
+notebooks/attention_unet_model.pth
+notebooks/test_predictions_with_stats/
