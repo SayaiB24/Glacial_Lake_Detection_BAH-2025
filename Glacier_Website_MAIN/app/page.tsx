@@ -93,29 +93,36 @@ export default function HomePage() {
         </div>
       </header>
 
-      <section className="relative h-96 bg-gradient-to-r from-blue-900 to-purple-900 overflow-hidden">
-        <div className="absolute inset-0 h-96">
-          <Image
-            src="/assets/frame.png"
-            alt="Mountain landscape"
-            fill
-            className="object-cover opacity-60"
-          />
-        </div>
-        <div className="relative max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 h-96 flex items-center">
-          <div className="text-white max-w-2xl">
-            <h1 className="text-4xl md:text-5xl font-bold mb-4">Monitor Glacial Lakes in Real-Time</h1>
-            <p className="text-xl mb-8 text-blue-100">
-              Advanced geospatial analysis for critical environmental monitoring
-            </p>
-            <Link href="/gis-map">
-              <Button size="lg" className="bg-orange-500 hover:bg-orange-600 text-white">
-                Explore Interactive Map →
-              </Button>
-            </Link>
+      <section className="relative h-[45rem] bg-gradient-to-r from-blue-900 to-purple-900 overflow-hidden">
+          
+          {/* FIX 1: Removed h-96 to let it fill the parent section */}
+          <div className="absolute inset-0">
+            <Image
+              src="assets/homepage3.jpg"
+              alt="Mountain landscape"
+              width={1920}
+              height={1080}
+              
+              // FIX 2: Added w-full and h-full to make the image fill this div
+              className="w-full h-full object-cover opacity-60"
+            />
           </div>
-        </div>
-      </section>
+
+          {/* FIX 3: Matched the height to the parent section (h-[45rem]) */}
+          <div className="relative max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 h-[45rem] flex items-start pt-32">
+              <div className="text-white max-w-2xl">
+                  <h1 className="text-4xl md:text-5xl font-bold mb-4">Monitor Glacial Lakes in Real-Time</h1>
+                  <p className="text-xl mb-8 text-blue-100">
+                    Advanced geospatial analysis for critical environmental monitoring
+                  </p>
+                  <Link href="/gis-map">
+                    <Button size="lg" className="bg-orange-500 hover:bg-orange-600 text-white">
+                      Explore Interactive Map →
+                    </Button>
+                  </Link>
+              </div>
+          </div>
+</section>
 
       <section id="stats-section" className="py-16 bg-gray-50">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
@@ -220,7 +227,7 @@ export default function HomePage() {
               <Button className="bg-blue-600 hover:bg-blue-700">Try Interactive Tools</Button>
             </div>
             <div className="relative">
-              <Image src="/assets/advanced_visualize.jpg" alt="GIS Interface" width={600} height={400} className="rounded-lg shadow-xl" />
+              <Image src="/assets/advanced_vis.jpg" alt="GIS Interface" width={600} height={400} className="rounded-lg shadow-xl" />
             </div>
           </div>
         </div>
