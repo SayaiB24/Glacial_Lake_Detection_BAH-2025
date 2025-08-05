@@ -11,3 +11,4 @@ notebooks/best_model_attention.pth
 notebooks/attention_unet_model.pth
 notebooks/test_predictions_with_stats/
 notebooks/unet_final_model.pth
+notebooks/hybrid_model_best.pth
