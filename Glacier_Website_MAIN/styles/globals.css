@@ -88,3 +88,44 @@
     @apply bg-background text-foreground;
   }
 }
+
+/* Add to app/globals.css */
+
+.glass-container-blue {
+    background: rgba(255, 255, 255, 0.6);
+    backdrop-filter: blur(10px);
+    border: 1px solid rgba(30, 64, 175, 0.1);
+}
+.btn-analyze-blue {
+    background: #2563eb; /* blue-600 */
+    color: #ffffff;
+}
+.btn-analyze-blue:hover {
+    background: #1d4ed8; /* blue-800 */
+}
+.file-input-label-blue {
+    background-color: #f0f9ff; /* blue-50 */
+    border: 2px dashed #93c5fd; /* blue-300 */
+    color: #374151; /* gray-700 */
+    border-radius: 0.5rem;
+    text-align: center;
+    cursor: pointer;
+}
+.date-input-blue {
+    background-color: #f8fafc; /* slate-50 */
+    border: 1px solid #cbd5e1; /* slate-300 */
+    color: #0f172a; /* slate-900 */
+    padding: 0.75rem;
+    border-radius: 0.5rem;
+    width: 100%;
+}
+.graph-toggle-btn-blue {
+    background-color: transparent;
+    border: 1px solid #93c5fd; /* blue-300 */
+    color: #3b82f6; /* blue-500 */
+}
+.graph-toggle-btn-blue.active {
+    background-color: #3b82f6; /* blue-500 */
+    color: #ffffff;
+    border-color: #3b82f6;
+}

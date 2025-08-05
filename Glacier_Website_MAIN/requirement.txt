@@ -1,2 +1,4 @@
 npm
 leaflet
+gsap
+react-dropzone

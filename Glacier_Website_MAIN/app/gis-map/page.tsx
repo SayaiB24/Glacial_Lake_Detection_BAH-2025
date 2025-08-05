@@ -4,11 +4,9 @@ import { useEffect, useRef, useState, Suspense } from "react"
 import { useSearchParams } from "next/navigation"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
-import { Checkbox } from "@/components/ui/checkbox"
-import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog"
 import {
-  Search, Layers, Home, ZoomIn, ZoomOut, Ruler, Download, ChevronLeft, ChevronRight, Expand, Info, BarChart3, FileText,
-  TriangleIcon as ExclamationTriangle, MapIcon, Snowflake, MapPin, Droplets, Upload
+  Search, Layers, Home, ZoomIn, ZoomOut, Ruler, Expand, ChevronLeft, MapIcon, ChevronDown,
+  Image as ImageIcon, LineChart, AlertTriangle
 } from "lucide-react"
 import Link from "next/link"
 
@@ -24,63 +22,37 @@ const baseLayerSources = {
 };
 
 interface LayerData { id: string; name: string; enabled: boolean; icon: any; }
-interface FeatureInfo { type: string; properties: any; }
+interface RiskAlert {
+    id: string;
+    name: string;
+    riskLevel: 'High' | 'Moderate' | 'Low';
+    lastUpdated: string;
+}
 
 function GISMap() {
-
-  // --- NEW STATE for Area of Interest workflow ---
-  const [isDrawing, setIsDrawing] = useState(false);
-  const [drawnArea, setDrawnArea] = useState<any>(null);
-  const [isProcessing, setIsProcessing] = useState(false);
-  const [processingStatus, setProcessingStatus] = useState("");
-  const [analysisResult, setAnalysisResult] = useState<any>(null);
-  const analysisLayerRef = useRef<any>(null);
-  const drawControlRef = useRef<any>(null);
-
   const mapRef = useRef<HTMLDivElement>(null)
   const pageContainerRef = useRef<HTMLDivElement>(null)
   const mapInstance = useRef<any>(null)
   const baseLayerRef = useRef<any>(null)
   const drawnItemsRef = useRef<any>(null)
-  //const [isLayerPanelOpen, setIsLayerPanelOpen] = useState(true)
-  const [isInfoPanelOpen, setIsInfoPanelOpen] = useState(true)
-  //const [activeTab, setActiveTab] = useState("information")
-  //const [selectedFeature, setSelectedFeature] = useState<FeatureInfo | null>(null)
-  const [coordinates, setCoordinates] = useState("28.2380° N, 83.9956° E")
+  const [isLayerPanelOpen, setIsLayerPanelOpen] = useState(true)
   const [searchQuery, setSearchQuery] = useState("")
-  const [timeSeriesResult, setTimeSeriesResult] = useState<any>(null)
-  const [timeSeriesLoading, setTimeSeriesLoading] = useState(false)
-  const [timeSeriesError, setTimeSeriesError] = useState<string | null>(null)
-  const [selectLakeMode, setSelectLakeMode] = useState(false)
-  const [filterMode, setFilterMode] = useState(false)
-  const [filterRadius, setFilterRadius] = useState(5)
-  const [filterCenter, setFilterCenter] = useState<{lat: number, lng: number} | null>(null)
-  const [filterResults, setFilterResults] = useState<any[]>([])
-  const [filterLoading, setFilterLoading] = useState(false)
-  const [filterError, setFilterError] = useState<string | null>(null)
-  const [showFilterResultsPanel, setShowFilterResultsPanel] = useState(false)
-  const [uploadedFile, setUploadedFile] = useState<File | null>(null);
-  const fileInputRef = useRef<HTMLInputElement>(null);
 
-  const layerRefs = useRef<{ [key: string]: any }>({})
-  const areaFilterMarkerRef = useRef<any>(null)
-  const areaFilterCircleRef = useRef<any>(null)
-  const timeSeriesMarkerRef = useRef<any>(null)
+  const [isDrawing, setIsDrawing] = useState(false);
+  const [drawnArea, setDrawnArea] = useState<any>(null);
+  const [isProcessing, setIsProcessing] = useState(false);
+  const [processingStatus, setProcessingStatus] = useState("");
+  const [analysisResult, setAnalysisResult] = useState<any>(null);
+  const [isResultsOpen, setIsResultsOpen] = useState(true);
+  const [riskAlerts, setRiskAlerts] = useState<RiskAlert[]>([]);
+  const analysisLayerRef = useRef<any>(null);
+  const drawControlRef = useRef<any>(null);
 
   const [layers, setLayers] = useState<LayerData[]>([
     { id: "satellite", name: "Satellite", enabled: false, icon: MapIcon },
     { id: "terrain", name: "Terrain", enabled: false, icon: MapIcon },
     { id: "hybrid", name: "Hybrid", enabled: true, icon: MapIcon },
   ]);
-
-  const [featureLayers, setFeatureLayers] = useState<LayerData[]>([
-    { id: "lakes", name: "Glacial Lakes", enabled: true, icon: Droplets },
-    { id: "rivers", name: "Rivers", enabled: true, icon: Droplets },
-    { id: "glaciers", name: "Glaciers", enabled: false, icon: Snowflake },
-    { id: "watersheds", name: "Watersheds", enabled: false, icon: MapPin },
-  ]);
-
-  const searchParams = useSearchParams();
 
   useEffect(() => {
     if (mapInstance.current) return;
@@ -90,148 +62,141 @@ function GISMap() {
     require("leaflet-draw");
     if (!mapRef.current) return;
 
-    const query = searchParams.get('query');
-    const lat = searchParams.get('lat');
-    const lng = searchParams.get('lng');
-    const zoom = searchParams.get('zoom');
-
     let initialCenter: [number, number] = [28.238, 83.9956];
     let initialZoom = 6;
 
     const createMap = (center: [number, number], zoom: number) => {
         if (mapInstance.current) return;
         mapInstance.current = L.map(mapRef.current, { center, zoom, zoomControl: false });
-
-        // --- MODIFICATION: Initialize feature group for drawn items ---
         drawnItemsRef.current = new L.FeatureGroup();
         mapInstance.current.addLayer(drawnItemsRef.current);
-
-        loadAllFeatureLayers();
         handleBaseLayerChange('hybrid');
-        mapInstance.current.on("mousemove", (e: any) => {
-            const lat = e.latlng.lat.toFixed(4);
-            const lng = e.latlng.lng.toFixed(4);
-            setCoordinates(`${lat}° N, ${lng}° E`);
-        });
+
         mapInstance.current.on(L.Draw.Event.CREATED, (event: any) => {
             const layer = event.layer;
-            drawnItemsRef.current.addLayer(layer);
-            if (event.layerType === 'polygon') {
-              const area = L.GeometryUtil.geodesicArea(layer.getLatLngs()[0]);
-              const areaInKm = (area / 1000000).toFixed(2);
-              layer.bindPopup(`<b>Area:</b> ${areaInKm} km²`).openPopup();
-            }
-            if (event.layerType === 'polyline') {
-              let distance = 0;
-              const latlngs = layer.getLatLngs();
-              for (let i = 0; i < latlngs.length - 1; i++) {
-                distance += latlngs[i].distanceTo(latlngs[i + 1]);
-              }
-              const distanceInKm = (distance / 1000).toFixed(2);
-              layer.bindPopup(`<b>Distance:</b> ${distanceInKm} km`).openPopup();
-            }
-        });
-         // --- MODIFICATION: Add event listener for when a shape is drawn ---
-        mapInstance.current.on(L.Draw.Event.CREATED, (event: any) => {
-            const layer = event.layer;
-            
-            // Clear previous drawings
-            drawnItemsRef.current.clearLayers();
-            drawnItemsRef.current.addLayer(layer);
-
-            // Save the drawn area's data and exit drawing mode
-            setDrawnArea(layer.toGeoJSON());
-            setIsDrawing(false);
-            setAnalysisResult(null); // Clear previous results
-        });
-    };
-
-    const geocodeQueryAndSetView = async (searchQuery: string) => {
-        try {
-            const response = await fetch(`https://nominatim.openstreetmap.org/search?format=json&q=${searchQuery}`);
-            const data = await response.json();
-            if (data && data.length > 0) {
-                createMap([data[0].lat, data[0].lon], 13);
+            if (drawControlRef.current) {
+                drawnItemsRef.current.clearLayers();
+                drawnItemsRef.current.addLayer(layer);
+                setDrawnArea(layer.toGeoJSON());
+                setIsDrawing(false);
+                drawControlRef.current = null;
             } else {
-                console.warn("Location from query not found, using default.");
-                createMap(initialCenter, initialZoom);
+                drawnItemsRef.current.addLayer(layer);
+                 if (event.layerType === 'polygon') {
+                    const area = L.GeometryUtil.geodesicArea(layer.getLatLngs()[0]);
+                    layer.bindPopup(`<b>Area:</b> ${(area / 1000000).toFixed(2)} km²`).openPopup();
+                 }
+                 if (event.layerType === 'polyline') {
+                    let distance = 0;
+                    const latlngs = layer.getLatLngs();
+                    for (let i = 0; i < latlngs.length - 1; i++) {
+                        distance += latlngs[i].distanceTo(latlngs[i + 1]);
+                    }
+                    layer.bindPopup(`<b>Distance:</b> ${(distance / 1000).toFixed(2)} km`).openPopup();
+                 }
             }
+        });
+    };
+    
+    createMap(initialCenter, initialZoom);
+
+    // Fetch risk alerts
+    const fetchRiskAlerts = async () => {
+        try {
+            const response = await fetch('/api/risk-alerts');
+            const data = await response.json();
+            setRiskAlerts(data);
         } catch (error) {
-            console.error("Geocoding failed:", error);
-            createMap(initialCenter, initialZoom);
+            console.error("Failed to fetch risk alerts:", error);
         }
     };
-
-    if (query) {
-        geocodeQueryAndSetView(query);
-    } else {
-        if (lat && lng) {
-            initialCenter = [parseFloat(lat), parseFloat(lng)];
-            initialZoom = zoom ? parseInt(zoom) : 10;
-        }
-        createMap(initialCenter, initialZoom);
-    }
-
+    fetchRiskAlerts();
+    
     return () => {
       if (mapInstance.current) {
         mapInstance.current.remove();
         mapInstance.current = null;
       }
     };
-  }, [searchParams]);
+  }, []);
 
+  const handleExitAoiMode = () => {
+    if (isDrawing && drawControlRef.current) {
+        drawControlRef.current.disable();
+        drawControlRef.current = null;
+    }
+    setIsDrawing(false);
+    setDrawnArea(null);
+    if (drawnItemsRef.current) {
+        drawnItemsRef.current.clearLayers();
+    }
+    setAnalysisResult(null);
+    setProcessingStatus("");
+    if (analysisLayerRef.current) {
+        if (mapInstance.current.hasLayer(analysisLayerRef.current)) {
+            mapInstance.current.removeLayer(analysisLayerRef.current);
+        }
+        analysisLayerRef.current = null;
+    }
+  };
+  
   useEffect(() => {
-    if (!mapInstance.current) return;
-    const handleMapClick = (e: any) => {
-      if (filterMode) {
-        setFilterCenter({ lat: e.latlng.lat, lng: e.latlng.lng });
-        if (areaFilterMarkerRef.current) {
-          mapInstance.current.removeLayer(areaFilterMarkerRef.current);
+    const handleKeyDown = (event: KeyboardEvent) => {
+        if (event.key === 'Escape') {
+            handleExitAoiMode();
         }
-        areaFilterMarkerRef.current = L.marker([e.latlng.lat, e.latlng.lng], { icon: L.icon({ iconUrl: 'https://unpkg.com/leaflet@1.9.4/dist/images/marker-icon.png', iconSize: [25, 41], iconAnchor: [12, 41] }) }).addTo(mapInstance.current);
-
-        if (areaFilterCircleRef.current) {
-          mapInstance.current.removeLayer(areaFilterCircleRef.current);
-        }
-        areaFilterCircleRef.current = L.circle([e.latlng.lat, e.latlng.lng], {
-          radius: filterRadius * 1000, color: "#2563eb", fillColor: "#60a5fa", fillOpacity: 0.2, weight: 2, dashArray: "4 4"
-        }).addTo(mapInstance.current);
-      }
-      if (selectLakeMode) {
-        if (timeSeriesMarkerRef.current) {
-          mapInstance.current.removeLayer(timeSeriesMarkerRef.current);
-        }
-        timeSeriesMarkerRef.current = L.marker([e.latlng.lat, e.latlng.lng], { icon: L.icon({ iconUrl: 'https://unpkg.com/leaflet@1.9.4/dist/images/marker-icon.png', iconSize: [25, 41], iconAnchor: [12, 41] }) }).addTo(mapInstance.current);
-      }
     };
-    mapInstance.current.on("click", handleMapClick);
+    window.addEventListener('keydown', handleKeyDown);
     return () => {
-      if (mapInstance.current) {
-        mapInstance.current.off("click", handleMapClick);
-      }
+        window.removeEventListener('keydown', handleKeyDown);
     };
-  }, [filterMode, selectLakeMode, filterRadius]);
+  }, [isDrawing]);
 
-  const runLakeAreaFilter = async (lat: number, lng: number, radiusKm: number) => {
-    setFilterLoading(true); setFilterError(null); setFilterResults([]);
-    try {
-      const lakesLayer = layerRefs.current["lakes"];
-      if (!lakesLayer) throw new Error("Lakes data not loaded");
-      const found: any[] = [];
-      lakesLayer.eachLayer((layer: any) => {
-        if (layer.feature?.geometry?.type === "Point") {
-          const [lakeLng, lakeLat] = layer.feature.geometry.coordinates;
-          const R = 6371; const dLat = (lakeLat - lat) * Math.PI / 180; const dLng = (lakeLng - lng) * Math.PI / 180;
-          const a = Math.sin(dLat/2) * Math.sin(dLat/2) + Math.cos(lat*Math.PI/180) * Math.cos(lakeLat*Math.PI/180) * Math.sin(dLng/2) * Math.sin(dLng/2);
-          const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a)); const d = R * c;
-          if (d <= radiusKm) found.push({ ...layer.feature.properties, lat: lakeLat, lng: lakeLng, risk_level: layer.feature.properties.risk_level || "Unknown", distance_km: d.toFixed(2) });
+
+  const handleEnableDrawing = () => {
+    handleExitAoiMode();
+    setIsDrawing(true);
+    const drawingTool = new L.Draw.Rectangle(mapInstance.current, {
+        shapeOptions: { color: '#0ea5e9', fillColor: '#67e8f9', fillOpacity: 0.5 }
+    });
+    drawControlRef.current = drawingTool;
+    drawingTool.enable();
+  };
+
+  const handleStartProcessing = async () => {
+    if (!drawnArea) { alert("Please select an area first."); return; }
+    setIsProcessing(true);
+    setIsResultsOpen(true);
+    setAnalysisResult(null);
+    if (analysisLayerRef.current) {
+        if (mapInstance.current.hasLayer(analysisLayerRef.current)) {
+            mapInstance.current.removeLayer(analysisLayerRef.current);
         }
+        analysisLayerRef.current = null;
+    }
+
+    try {
+      setProcessingStatus("Requesting satellite imagery...");
+      await new Promise(resolve => setTimeout(resolve, 1500));
+      setProcessingStatus("Analyzing image with AI model...");
+      const response = await fetch('/api/process-area', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ area: drawnArea.geometry }),
       });
-      setFilterResults(found); setShowFilterResultsPanel(true);
-      if (areaFilterMarkerRef.current && mapInstance.current) { mapInstance.current.removeLayer(areaFilterMarkerRef.current); areaFilterMarkerRef.current = null; }
-    } catch (err: any) { setFilterError(err.message || "Error occurred");
-    } finally { setFilterLoading(false); }
-  }
+      if (!response.ok) throw new Error('Analysis failed on the server.');
+      const result = await response.json();
+      setAnalysisResult(result);
+      setProcessingStatus("Analysis complete.");
+      analysisLayerRef.current = L.geoJSON(result.polygons, {
+        style: { color: "#be123c", weight: 2, fillColor: "#f43f5e", fillOpacity: 0.7 },
+        onEachFeature: (feature: any, layer: any) => {
+           layer.bindPopup(`<b>Detected Lake</b><br/>Area: ${(feature.properties.area_sqkm || 0).toFixed(4)} km²`);
+        }
+      }).addTo(mapInstance.current);
+    } catch (error: any) { setProcessingStatus(`Error: ${error.message}`);
+    } finally { setIsProcessing(false); }
+  };
 
   const handleBaseLayerChange = (layerId: string) => {
     if (!mapInstance.current || !L) return;
@@ -244,76 +209,9 @@ function GISMap() {
     newBaseLayer.bringToBack();
   };
 
-  const handleTimeSeriesDetection = async (coords: [number, number]) => {
-    setTimeSeriesLoading(true); setTimeSeriesError(null); setTimeSeriesResult(null);
-    try {
-      const res = await fetch("/api/detect_glacial_lake?mode=timeseries", {
-        method: "POST", headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ longitude: coords[0], latitude: coords[1] })
-      });
-      if (!res.ok) throw new Error("Time series detection failed");
-      const data = await res.json();
-      setTimeSeriesResult(data);
-    } catch (err: any) { setTimeSeriesError(err.message || "Error occurred");
-    } finally { setTimeSeriesLoading(false); }
-  }
-
-  const loadAllFeatureLayers = async () => {
-    const layersToLoad = [
-      { id: 'lakes', path: '/lakes.geojson', style: { color: "#3B82F6", weight: 2, fillOpacity: 0.6, fillColor: "#93C5FD" }, type: 'Lake' },
-      { id: 'rivers', path: '/rivers.geojson', style: { color: "#06B6D4", weight: 3, opacity: 0.8 }, type: 'River' },
-      { id: 'glaciers', path: '/glaciers.geojson', style: { color: "#A5B4FC", weight: 1, fillOpacity: 0.7, fillColor: "#C7D2FE" }, type: 'Glacier' },
-      { id: 'watersheds', path: '/watersheds.geojson', style: { color: "#16A34A", weight: 2, fillOpacity: 0.2, fillColor: "#86EFAC" }, type: 'Watershed' }
-    ];
-    for (const layerInfo of layersToLoad) {
-      try {
-        const response = await fetch(layerInfo.path);
-        if (!response.ok) throw new Error(`Failed to fetch ${layerInfo.path}`);
-        const data = await response.json();
-        const geoJsonLayer = L.geoJSON(data, {
-          style: layerInfo.style,
-          onEachFeature: (feature: any, layer: any) => {
-            layer.on("click", () => {
-              setSelectedFeature({ type: layerInfo.type, properties: feature.properties });
-              if (selectLakeMode && layerInfo.type === 'Lake' && feature.geometry?.type === 'Point') {
-                handleTimeSeriesDetection(feature.geometry.coordinates);
-                setSelectLakeMode(false);
-              } else {
-                setTimeSeriesResult(null);
-                setTimeSeriesError(null);
-              }
-            });
-            layer.bindPopup(`<div class="p-1 font-sans"><h4 class="font-bold">${feature.properties.name || `Unnamed ${layerInfo.type}`}</h4></div>`);
-          },
-        });
-        layerRefs.current[layerInfo.id] = geoJsonLayer;
-        if (featureLayers.find(l => l.id === layerInfo.id)?.enabled && mapInstance.current) {
-          geoJsonLayer.addTo(mapInstance.current);
-        }
-      } catch (error) { console.error(`Error loading ${layerInfo.id}:`, error); }
-    }
-  };
-
-  const toggleLayer = (layerId: string) => {
-    const layer = layerRefs.current[layerId];
-    if (!layer || !mapInstance.current) return;
-    const isEnabled = featureLayers.find((l) => l.id === layerId)?.enabled;
-    if (isEnabled) { mapInstance.current.removeLayer(layer); }
-    else { mapInstance.current.addLayer(layer); }
-    setFeatureLayers((prev) => prev.map((l) => (l.id === layerId ? { ...l, enabled: !l.enabled } : l)));
-  };
-
-  const handleMapSearch = async (e: React.KeyboardEvent<HTMLInputElement>) => {
-    if (e.key !== 'Enter' || !searchQuery) return;
-    const response = await fetch(`https://nominatim.openstreetmap.org/search?format=json&q=${searchQuery}`);
-    const data = await response.json();
-    if (data && data.length > 0 && mapInstance.current) {
-      mapInstance.current.setView([data[0].lat, data[0].lon], 13);
-    } else { alert("Location not found."); }
-  };
-
   const startMeasuring = (tool: 'distance' | 'area') => {
     if (!mapInstance.current || !L) return;
+    handleExitAoiMode();
     const drawOptions = {
         polyline: { shapeOptions: { color: '#f357a1', weight: 4 } },
         polygon: { shapeOptions: { color: '#f357a1', weight: 4 }, showArea: true },
@@ -321,111 +219,23 @@ function GISMap() {
     if(tool === 'distance') new L.Draw.Polyline(mapInstance.current, drawOptions.polyline).enable();
     if(tool === 'area') new L.Draw.Polygon(mapInstance.current, drawOptions.polygon).enable();
   };
-
+  
   const toggleFullscreen = () => {
     if (!document.fullscreenElement) pageContainerRef.current?.requestFullscreen();
     else document.exitFullscreen();
   };
 
-
-
-  const handleFileUpload = (event: React.ChangeEvent<HTMLInputElement>) => {
-    if (event.target.files && event.target.files.length > 0) {
-      const file = event.target.files[0];
-      setUploadedFile(file);
-      console.log("File uploaded:", file.name);
-    }
-  };
-   
-  // --- NEW FUNCTIONS for Area of Interest workflow ---
-  const handleEnableDrawing = () => {
-    if (!mapInstance.current) return;
-    // Clear previous results and drawings
-    setAnalysisResult(null);
-    if (analysisLayerRef.current) {
-      mapInstance.current.removeLayer(analysisLayerRef.current);
-    }
-    drawnItemsRef.current.clearLayers();
-    setDrawnArea(null);
-
-    setIsDrawing(true);
-    // Use leaflet-draw to start drawing a rectangle
-    drawControlRef.current = new L.Draw.Rectangle(mapInstance.current, {
-        shapeOptions: {
-            color: '#0ea5e9', // cyan-500
-            fillColor: '#67e8f9', // cyan-200
-            fillOpacity: 0.5,
-        }
-    });
-    drawControlRef.current.enable();
-  };
-
-  const handleCancelDrawing = () => {
-    if (drawControlRef.current) {
-        drawControlRef.current.disable();
-    }
-    setIsDrawing(false);
-  }
-
-  const handleStartProcessing = async () => {
-    if (!drawnArea) {
-      alert("Please select an area first.");
-      return;
-    }
-
-    setIsProcessing(true);
-    setAnalysisResult(null);
-    if (analysisLayerRef.current) {
-        mapInstance.current.removeLayer(analysisLayerRef.current);
-    }
-
-    try {
-      // Step 1: Fetching Image
-      setProcessingStatus("Requesting satellite imagery from GEE...");
-      // Simulate delay
-      await new Promise(resolve => setTimeout(resolve, 2000));
-
-      // Step 2: Running AI Model
-      setProcessingStatus("Analyzing image with AI model...");
-      const response = await fetch('/api/process-area', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ area: drawnArea.geometry }),
-      });
-
-      if (!response.ok) {
-        throw new Error('Analysis failed on the server.');
-      }
-      
-      const result = await response.json();
-      setAnalysisResult(result);
-      setProcessingStatus("Analysis complete. Displaying results.");
-
-      // Display new polygons on the map
-      analysisLayerRef.current = L.geoJSON(result.polygons, {
-        style: {
-          color: "#be123c", // rose-700
-          weight: 2,
-          fillColor: "#f43f5e", // rose-500
-          fillOpacity: 0.7,
-        },
-        onEachFeature: (feature: any, layer: any) => {
-           const area = (feature.properties.area_sqkm || 0).toFixed(4);
-           layer.bindPopup(`<b>Detected Lake</b><br/>Area: ${area} km²`);
-        }
-      }).addTo(mapInstance.current);
-
-    } catch (error: any) {
-      console.error("Processing error:", error);
-      setProcessingStatus(`Error: ${error.message}`);
-    } finally {
-      setIsProcessing(false);
-    }
-  };
-
   const zoomIn = () => mapInstance.current?.zoomIn();
   const zoomOut = () => mapInstance.current?.zoomOut();
   const goHome = () => mapInstance.current?.setView([28.238, 83.9956], 6);
+
+  const riskColor = (level: RiskAlert['riskLevel']) => {
+    switch(level) {
+        case 'High': return 'text-red-500';
+        case 'Moderate': return 'text-yellow-500';
+        default: return 'text-gray-500';
+    }
+  }
 
   return (
     <div className="h-screen flex flex-col bg-gray-50" ref={pageContainerRef}>
@@ -438,7 +248,7 @@ function GISMap() {
             </Link>
             <div className="relative">
                 <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-400 w-4 h-4" />
-                <Input placeholder="Search on map..." className="pl-10 w-64" value={searchQuery} onChange={(e) => setSearchQuery(e.target.value)} onKeyDown={handleMapSearch} />
+                <Input placeholder="Search on map..." className="pl-10 w-64" value={searchQuery} onChange={(e) => setSearchQuery(e.target.value)} />
             </div>
           </div>
         </div>
@@ -460,15 +270,7 @@ function GISMap() {
                         </div>
                     ))}
                 </div>
-                <div className="space-y-2">
-                    <div className="flex items-center space-x-2 text-sm font-medium text-gray-700 mb-2"><Snowflake className="w-4 h-4" /><span>Glacial Features</span></div>
-                    {featureLayers.map((layer) => (
-                        <div key={layer.id} className="flex items-center space-x-3 pl-6">
-                            <Checkbox id={layer.id} checked={layer.enabled} onCheckedChange={() => toggleLayer(layer.id)} />
-                            <label htmlFor={layer.id} className="text-sm text-gray-600 cursor-pointer">{layer.name}</label>
-                        </div>
-                    ))}
-                </div>
+                
                 <div className="pt-4 border-t">
                     <h4 className="text-sm font-medium text-gray-700 mb-3">Analysis Tools</h4>
                     <div className="space-y-2">
@@ -478,114 +280,113 @@ function GISMap() {
                 </div>
             </div>
         </div>
-     
 
-        
-      <div className="flex-1 flex flex-col relative">
-          <div className={`absolute top-0 left-0 h-full bg-white shadow-lg z-30 transition-transform duration-300 border-r ${isLayerPanelOpen ? 'translate-x-0' : '-translate-x-full'}`} style={{ width: "300px" }}></div>
-          {/* This div is now positioned absolutely over the map with a higher z-index */}
-          <div className="absolute top-2 right-2 z-[1000] p-2 flex justify-end items-center space-x-2">
+        <div className="flex-1 flex flex-col relative">
+            <div className="absolute top-2 right-2 z-[1000] p-2 flex justify-end items-center space-x-2">
               <Button onClick={zoomIn} size="sm" className="w-9 h-9 p-0 bg-white text-gray-800 hover:bg-gray-200 shadow-sm border"><ZoomIn className="w-4 h-4" /></Button>
               <Button onClick={zoomOut} size="sm" className="w-9 h-9 p-0 bg-white text-gray-800 hover:bg-gray-200 shadow-sm border"><ZoomOut className="w-4 h-4" /></Button>
               <Button onClick={goHome} size="sm" className="w-9 h-9 p-0 bg-white text-gray-800 hover:bg-gray-200 shadow-sm border"><Home className="w-4 h-4" /></Button>
               <Button onClick={toggleFullscreen} size="sm" className="w-9 h-9 p-0 bg-white text-gray-800 hover:bg-gray-200 shadow-sm border"><Expand className="w-4 h-4" /></Button>
-          </div>
-          
-          {/* The map container */}
-          <div className="flex-1">
-              <div ref={mapRef} className="w-full h-full" />
-          </div>
-      </div>
-
-        <div className={`bg-white shadow-lg z-20 transition-transform duration-300 border-l ${isInfoPanelOpen ? "translate-x-0" : "translate-x-full"}`} style={{ width: "350px" }}>
-              <div className="p-4 h-full overflow-y-auto flex flex-col">
-                  <h3 className="text-lg font-semibold text-gray-800 pb-3 border-b mb-4">Area of Interest Analysis</h3>
-                  
-                  {/* --- Step 1: Selection --- */}
-                  <div className="space-y-3">
-                      <p className="text-sm text-gray-600">
-                          Define a rectangular area on the map to run real-time lake detection.
-                      </p>
-                      {!isDrawing ? (
-                          <Button onClick={handleEnableDrawing} className="w-full bg-blue-600 hover:bg-blue-700">
-                              Select Area
-                          </Button>
-                      ) : (
-                          <div className="border border-blue-300 bg-blue-50 text-center p-3 rounded-md">
-                              <p className="text-sm text-blue-800 font-semibold">Drawing Mode Active</p>
-                              <p className="text-xs text-blue-600 mt-1">Click and drag on the map to draw a rectangle.</p>
-                              <Button onClick={handleCancelDrawing} variant="link" size="sm" className="mt-1 text-red-600">Cancel</Button>
-                          </div>
-                      )}
-                  </div>
-
-                  {/* --- Step 2: Processing --- */}
-                  <div className="mt-4">
-                      <Button 
-                          onClick={handleStartProcessing} 
-                          disabled={!drawnArea || isProcessing} 
-                          className="w-full bg-green-600 hover:bg-green-700 disabled:bg-gray-400"
-                      >
-                          {isProcessing ? "Processing..." : "Start Process"}
-                      </Button>
-                  </div>
-
-                  {/* --- Step 3: Status & Results --- */}
-                  {(isProcessing || processingStatus) && (
-                      <div className="mt-6 pt-4 border-t">
-                          <h4 className="font-semibold text-gray-700 mb-2">Status</h4>
-                          <div className="bg-gray-100 p-3 rounded-md text-sm text-gray-800">
-                              {isProcessing && (
-                                  <div className="flex items-center">
-                                      {/* Simple Spinner Animation */}
-                                      <svg className="animate-spin -ml-1 mr-3 h-5 w-5 text-blue-600" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
-                                          <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
-                                          <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
-                                      </svg>
-                                      <span>{processingStatus}</span>
-                                  </div>
-                              )}
-                              {!isProcessing && processingStatus && (
-                                  <p>{processingStatus}</p>
-                              )}
-                          </div>
-                      </div>
-                  )}
-
-                  {analysisResult && (
-                      <div className="mt-4 pt-4 border-t">
-                          <h4 className="font-semibold text-gray-700 mb-2">Analysis Results</h4>
-                          <div className="space-y-2 text-sm">
-                              <div className="flex justify-between p-2 bg-gray-50 rounded">
-                                  <span>Lakes Detected:</span>
-                                  <span className="font-bold">{analysisResult.stats.lake_count}</span>
-                              </div>
-                              <div className="flex justify-between p-2 bg-gray-50 rounded">
-                                  <span>Total Lake Area:</span>
-                                  <span className="font-bold">{analysisResult.stats.total_area_sqkm.toFixed(4)} km²</span>
-                              </div>
-                          </div>
-                      </div>
-                  )}
-
-              </div>
-          </div>
-
-        {showFilterResultsPanel && (
-            <div className="fixed bottom-4 right-4 z-50 bg-white shadow-lg rounded-lg p-4 w-[340px] max-h-72 overflow-y-auto border">
-                <h4 className="font-semibold text-gray-900 mb-3 pb-2 border-b">Lakes within {filterRadius} km</h4>
-                {filterLoading && <div className="text-blue-600">Searching...</div>}
-                {filterError && <div className="text-red-600">{filterError}</div>}
-                {!filterLoading && !filterError && filterResults.length === 0 && (<div className="text-gray-500">No lakes found.</div>)}
-                {!filterLoading && !filterError && filterResults.length > 0 && (
-                    <ul className="divide-y divide-gray-200">{filterResults.map((lake, idx) => (<li key={idx} className="py-2 flex flex-col"><span className="font-bold text-gray-800">{lake.name || "Unnamed Lake"}</span><span className="text-xs text-gray-500">Dist: {lake.distance_km} km</span><span className="text-xs text-gray-500">Risk: <span className={lake.risk_level === "High" ? "text-red-600" : lake.risk_level === "Medium" ? "text-yellow-600" : "text-green-600"}>{lake.risk_level}</span></span></li>))}</ul>
-                )}
-                <Button size="sm" className="mt-3 w-full" onClick={() => {
-                    setShowFilterResultsPanel(false);
-                    if (areaFilterCircleRef.current && mapInstance.current) mapInstance.current.removeLayer(areaFilterCircleRef.current);
-                }}>Close</Button>
             </div>
-        )}
+            <div className="flex-1">
+                <div ref={mapRef} className="w-full h-full" />
+            </div>
+        </div>
+        
+        <div className={`bg-white shadow-lg z-20 transition-transform duration-300 border-l`} style={{ width: "350px" }}>
+            <div className="p-4 h-full overflow-y-auto flex flex-col">
+                {/* --- Section 1: Area of Interest --- */}
+                <div className="pb-4">
+                    <h3 className="text-lg font-semibold text-gray-800 pb-3 border-b mb-4">Area of Interest Analysis</h3>
+                    
+                    <div className="space-y-3">
+                        <p className="text-sm text-gray-600">Define a rectangular area on the map to run real-time lake detection.</p>
+                        {!isDrawing ? (
+                            <Button onClick={handleEnableDrawing} className="w-full bg-blue-600 hover:bg-blue-700">Select Area</Button>
+                        ) : (
+                            <div className="border border-blue-300 bg-blue-50 text-center p-3 rounded-md">
+                                <p className="text-sm text-blue-800 font-semibold">Drawing Mode Active</p>
+                                <p className="text-xs text-blue-600 mt-1">Click and drag on the map. <br/> Press 'Esc' to exit.</p>
+                            </div>
+                        )}
+                    </div>
+
+                    <div className="mt-2">
+                         <Button onClick={handleStartProcessing} disabled={!drawnArea || isProcessing} className="w-full bg-green-600 hover:bg-green-700 disabled:bg-gray-400">
+                            {isProcessing ? "Processing..." : "Start Process"}
+                        </Button>
+                    </div>
+
+                    {(isProcessing || processingStatus || analysisResult) && (
+                        <div className="mt-4">
+                            <details className="group" open={isResultsOpen} onToggle={(e) => setIsResultsOpen((e.target as HTMLDetailsElement).open)}>
+                                <summary className="flex items-center justify-between cursor-pointer font-semibold text-gray-700 p-2 rounded-md transition-colors hover:bg-gray-100">
+                                    Status & Results
+                                    <ChevronDown className="w-5 h-5 transition-transform group-open:rotate-180" />
+                                </summary>
+                                <div className="mt-2 bg-gray-50 p-3 rounded-md text-sm text-gray-800 space-y-3">
+                                    {isProcessing && (
+                                        <div className="flex items-center">
+                                            <svg className="animate-spin -ml-1 mr-3 h-5 w-5 text-blue-600" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24"><circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle><path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path></svg>
+                                            <span>{processingStatus}</span>
+                                        </div>
+                                    )}
+                                    {!isProcessing && processingStatus && (<p><strong>Status:</strong> {processingStatus}</p>)}
+
+                                    {analysisResult && (
+                                         <div className="space-y-2 pt-2 border-t border-gray-200">
+                                            <div className="flex justify-between"><span>Lakes Detected:</span><span className="font-bold">{analysisResult.stats.lake_count}</span></div>
+                                            <div className="flex justify-between"><span>Total Lake Area:</span><span className="font-bold">{analysisResult.stats.total_area_sqkm.toFixed(4)} km²</span></div>
+                                         </div>
+                                    )}
+                                </div>
+                            </details>
+                        </div>
+                    )}
+                </div>
+
+                {/* --- Section 2: Latest Risk Alerts --- */}
+                <div className="py-4 border-t">
+                    <div className="flex justify-between items-center mb-3">
+                        <div>
+                            <h3 className="text-lg font-semibold text-gray-800">Latest Risk Alerts</h3>
+                            <p className="text-xs text-gray-500">Updated every 4 days</p>
+                        </div>
+                        <Link href="/time-series" passHref>
+                            <Button size="sm">View Full Report</Button>
+                        </Link>
+                    </div>
+                    <div className="space-y-2 text-sm">
+                        <div className="flex font-semibold text-gray-600 px-2">
+                            <div className="flex-1">Lake ID/Name</div>
+                            <div className="w-28 text-right">Last Updated</div>
+                        </div>
+                        {riskAlerts.map(alert => (
+                             <div key={alert.id} className="flex items-center bg-gray-50 p-2 rounded-md hover:bg-gray-100 transition-colors">
+                                <AlertTriangle className={`w-4 h-4 mr-2 ${riskColor(alert.riskLevel)}`} />
+                                <div className="flex-1 truncate">{alert.id}</div>
+                                <div className="w-28 text-right text-gray-500">{alert.lastUpdated}</div>
+                            </div>
+                        ))}
+                    </div>
+                </div>
+
+                {/* --- Section 3: Navigation Buttons --- */}
+                <div className="mt-auto pt-4 border-t space-y-2">
+                    <Link href="/analyze-image" passHref>
+                        <Button variant="secondary" className="w-full justify-start">
+                           <ImageIcon className="w-4 h-4 mr-2"/> Analyze Image
+                        </Button>
+                    </Link>
+                    <Link href="/time-series" passHref>
+                         <Button variant="secondary" className="w-full justify-start">
+                           <LineChart className="w-4 h-4 mr-2"/> Time Series Analysis
+                        </Button>
+                    </Link>
+                </div>
+            </div>
+        </div>
+
       </div>
     </div>
   )

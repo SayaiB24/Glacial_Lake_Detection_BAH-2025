@@ -13,17 +13,14 @@ const createMockPolygon = (bbox: number[][]) => {
     const centerLng = minLng + (maxLng - minLng) / 2;
     const size = Math.min(maxLat - minLat, maxLng - minLng) * 0.1;
 
-    return [
-        [
-            [centerLng - size, centerLat - size],
-            [centerLng + size, centerLat - size],
-            [centerLng + size, centerLat + size],
-            [centerLng - size, centerLat + size],
-            [centerLng - size, centerLat - size],
-        ]
-    ];
+    return [[
+        [centerLng - size, centerLat - size],
+        [centerLng + size, centerLat - size],
+        [centerLng + size, centerLat + size],
+        [centerLng - size, centerLat + size],
+        [centerLng - size, centerLat - size],
+    ]];
 };
-
 
 export async function POST(request: NextRequest) {
   try {
@@ -34,41 +31,26 @@ export async function POST(request: NextRequest) {
         return NextResponse.json({ error: "Invalid area geometry provided." }, { status: 400 });
     }
 
-    // In a real application, you would do the following:
-    // 1. Get bounds from areaGeometry.coordinates.
-    // 2. Use the Google Earth Engine API to fetch a satellite image (TIFF).
-    // 3. Send this image to your AI model for processing.
-    // 4. The model returns GeoJSON polygons and statistics.
-
-    // Here, we simulate this process with a delay.
+    // Simulate GEE fetch and AI model processing
     await new Promise(resolve => setTimeout(resolve, 3000));
     
-    // For demonstration, we create a mock GeoJSON response.
+    // Create a mock GeoJSON response
     const mockBoundingBox = [
         areaGeometry.coordinates[0][0], // min lng, min lat
         areaGeometry.coordinates[0][2], // max lng, max lat
     ];
 
     const mockLakePolygon = createMockPolygon(mockBoundingBox);
-    const mockArea = 0.5; // Mock area in sq km
+    const mockArea = 0.5 + Math.random(); // Add some randomness
 
     const mockResponse = {
         polygons: {
             type: "FeatureCollection",
-            features: [
-                {
-                    type: "Feature",
-                    properties: {
-                        name: "Detected Lake 1",
-                        area_sqkm: mockArea,
-                        confidence: 0.95,
-                    },
-                    geometry: {
-                        type: "Polygon",
-                        coordinates: mockLakePolygon,
-                    },
-                },
-            ],
+            features: [{
+                type: "Feature",
+                properties: { area_sqkm: mockArea, confidence: 0.95 },
+                geometry: { type: "Polygon", coordinates: mockLakePolygon },
+            }],
         },
         stats: {
             lake_count: 1,

@@ -31,23 +31,11 @@ export default function HomePage() {
         }
       }, 16)
     }
+    
+    animateCounter(setLakesCount, 2500, 2000)
+    animateCounter(setCoverage, 85000, 2000)
+    animateCounter(setCriticalZones, 150, 2000)
 
-    const observer = new IntersectionObserver((entries) => {
-      entries.forEach((entry) => {
-        if (entry.isIntersecting) {
-          animateCounter(setLakesCount, 2500, 2000)
-          animateCounter(setCoverage, 85000, 2000)
-          animateCounter(setCriticalZones, 150, 2000)
-        }
-      })
-    })
-
-    const statsSection = document.getElementById("stats-section")
-    if (statsSection) {
-      observer.observe(statsSection)
-    }
-
-    return () => observer.disconnect()
   }, [])
 
   const handleSearch = (e: React.KeyboardEvent<HTMLInputElement>) => {
@@ -75,18 +63,6 @@ export default function HomePage() {
                 <Link href="/data" className="text-gray-600 hover:text-gray-900">Data</Link>
                 <Link href="/about" className="text-gray-600 hover:text-gray-900">About</Link>
               </nav>
-            </div>
-            <div className="flex items-center space-x-4">
-              {/* <div className="relative">
-                <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-400 w-4 h-4" />
-                <Input 
-                  placeholder="Search locations..." 
-                  className="pl-10 w-64"
-                  value={searchQuery}
-                  onChange={(e) => setSearchQuery(e.target.value)}
-                  onKeyDown={handleSearch}
-                />
-              </div> */}
               <Button>Sign In</Button>
             </div>
           </div>
@@ -94,58 +70,48 @@ export default function HomePage() {
       </header>
 
       <section className="relative h-[45rem] bg-gradient-to-r from-blue-900 to-purple-900 overflow-hidden">
-          
-          {/* FIX 1: Removed h-96 to let it fill the parent section */}
-          <div className="absolute inset-0">
-            <Image
-              src="assets/homepage3.jpg"
-              alt="Mountain landscape"
-              width={1920}
-              height={1080}
-              
-              // FIX 2: Added w-full and h-full to make the image fill this div
-              className="w-full h-full object-cover opacity-60"
-            />
-          </div>
+        <div className="absolute inset-0">
+          <Image
+            src="/assets/homepage3.jpg"
+            alt="Mountain landscape"
+            width={1920}
+            height={1080}
+            className="w-full h-full object-cover opacity-60"
+          />
+        </div>
+        <div className="relative max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 h-full flex items-center justify-center">
+            <div className="text-white max-w-4xl text-center">
+                <h1 className="text-4xl md:text-5xl font-bold mb-4">Monitor Glacial Lakes in Real-Time</h1>
+                <p className="text-xl mb-8 text-blue-100">
+                  Advanced geospatial analysis for critical environmental monitoring
+                </p>
+                <Link href="/gis-map">
+                  <Button size="lg" className="bg-orange-500 hover:bg-orange-600 text-white">
+                    Explore Interactive Map →
+                  </Button>
+                </Link>
 
-          {/* FIX 3: Matched the height to the parent section (h-[45rem]) */}
-          <div className="relative max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 h-[45rem] flex items-start pt-32">
-              <div className="text-white max-w-2xl">
-                  <h1 className="text-4xl md:text-5xl font-bold mb-4">Monitor Glacial Lakes in Real-Time</h1>
-                  <p className="text-xl mb-8 text-blue-100">
-                    Advanced geospatial analysis for critical environmental monitoring
-                  </p>
-                  <Link href="/gis-map">
-                    <Button size="lg" className="bg-orange-500 hover:bg-orange-600 text-white">
-                      Explore Interactive Map →
-                    </Button>
-                  </Link>
-              </div>
-          </div>
-</section>
-
-      <section id="stats-section" className="py-16 bg-gray-50">
-        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-8">
-            <Card className="bg-white shadow-lg">
-              <CardContent className="p-8 text-center">
-                <div className="text-3xl font-bold text-blue-600 mb-2">{lakesCount.toLocaleString()}+</div>
-                <div className="text-gray-600">Lakes Monitored</div>
-              </CardContent>
-            </Card>
-            <Card className="bg-white shadow-lg">
-              <CardContent className="p-8 text-center">
-                <div className="text-3xl font-bold text-blue-600 mb-2">{coverage.toLocaleString()}</div>
-                <div className="text-gray-600">km² Coverage</div>
-              </CardContent>
-            </Card>
-            <Card className="bg-white shadow-lg">
-              <CardContent className="p-8 text-center">
-                <div className="text-3xl font-bold text-blue-600 mb-2">{criticalZones}+</div>
-                <div className="text-gray-600">Critical Zones</div>
-              </CardContent>
-            </Card>
-          </div>
+                <div className="mt-20 grid grid-cols-1 md:grid-cols-3 gap-8">
+                    <Card className="bg-white/90 backdrop-blur-sm rounded-lg shadow-xl">
+                        <CardContent className="p-6 text-center">
+                            <div className="text-4xl font-bold text-blue-600 mb-2">{lakesCount.toLocaleString()}+</div>
+                            <div className="text-gray-600 font-medium">Lakes Monitored</div>
+                        </CardContent>
+                    </Card>
+                    <Card className="bg-white/90 backdrop-blur-sm rounded-lg shadow-xl">
+                        <CardContent className="p-6 text-center">
+                            <div className="text-4xl font-bold text-blue-600 mb-2">{coverage.toLocaleString()}</div>
+                            <div className="text-gray-600 font-medium">km² Coverage</div>
+                        </CardContent>
+                    </Card>
+                    <Card className="bg-white/90 backdrop-blur-sm rounded-lg shadow-xl">
+                        <CardContent className="p-6 text-center">
+                            <div className="text-4xl font-bold text-blue-600 mb-2">{criticalZones}+</div>
+                            <div className="text-gray-600 font-medium">Critical Zones</div>
+                        </CardContent>
+                    </Card>
+                </div>
+            </div>
         </div>
       </section>
 
@@ -227,7 +193,7 @@ export default function HomePage() {
               <Button className="bg-blue-600 hover:bg-blue-700">Try Interactive Tools</Button>
             </div>
             <div className="relative">
-              <Image src="/assets/advanced_vis.jpg" alt="GIS Interface" width={600} height={400} className="rounded-lg shadow-xl" />
+              <Image src="/assets/advanced_visualize.jpg" alt="GIS Interface" width={600} height={400} className="rounded-lg shadow-xl" />
             </div>
           </div>
         </div>
