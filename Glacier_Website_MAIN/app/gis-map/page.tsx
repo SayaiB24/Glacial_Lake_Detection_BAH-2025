@@ -343,7 +343,7 @@ function GISMap() {
       </header>
 
       <div className="flex-1 flex relative overflow-hidden">
-        <div className={`bg-white shadow-lg z-20 transition-transform duration-300 border-r ${isLayerPanelOpen ? "translate-x-0" : "-translate-x-full"}`} style={{ width: "300px" }}>
+        <div className={`bg-white shadow-lg z-20 transition-all duration-300 border-r ${isLayerPanelOpen ? 'ml-0' : '-ml-[300px]'}`} style={{ width: "300px" }}>
             <div className="p-4 border-b bg-gray-50 flex items-center justify-between">
                 <h3 className="text-lg font-semibold flex items-center text-gray-700"><Layers className="w-5 h-5 mr-2" />Map Layers</h3>
                 <Button variant="ghost" size="sm" onClick={() => setIsLayerPanelOpen(false)}><ChevronLeft className="w-4 h-4" /></Button>
@@ -376,20 +376,24 @@ function GISMap() {
                 </div>
             </div>
         </div>
-        {!isLayerPanelOpen && <Button className="absolute top-4 left-4 z-20" onClick={() => setIsLayerPanelOpen(true)} size="sm"><ChevronRight className="w-4 h-4" /></Button>}
+     
 
-        <div className="flex-1 flex flex-col">
-            <div className="bg-gray-100 border-b p-2 flex justify-end items-center space-x-2">
-                <Button onClick={zoomIn} size="sm" className="w-9 h-9 p-0 bg-white text-gray-800 hover:bg-gray-200 shadow-sm border"><ZoomIn className="w-4 h-4" /></Button>
-                <Button onClick={zoomOut} size="sm" className="w-9 h-9 p-0 bg-white text-gray-800 hover:bg-gray-200 shadow-sm border"><ZoomOut className="w-4 h-4" /></Button>
-                <Button onClick={goHome} size="sm" className="w-9 h-9 p-0 bg-white text-gray-800 hover:bg-gray-200 shadow-sm border"><Home className="w-4 h-4" /></Button>
-                <Button onClick={toggleFullscreen} size="sm" className="w-9 h-9 p-0 bg-white text-gray-800 hover:bg-gray-200 shadow-sm border"><Expand className="w-4 h-4" /></Button>
-            </div>
-
-            <div className="flex-1 relative">
-                <div ref={mapRef} className="w-full h-full" />
-            </div>
-        </div>
+        
+      <div className="flex-1 flex flex-col relative">
+          <div className={`absolute top-0 left-0 h-full bg-white shadow-lg z-30 transition-transform duration-300 border-r ${isLayerPanelOpen ? 'translate-x-0' : '-translate-x-full'}`} style={{ width: "300px" }}></div>
+          {/* This div is now positioned absolutely over the map with a higher z-index */}
+          <div className="absolute top-2 right-2 z-[1000] p-2 flex justify-end items-center space-x-2">
+              <Button onClick={zoomIn} size="sm" className="w-9 h-9 p-0 bg-white text-gray-800 hover:bg-gray-200 shadow-sm border"><ZoomIn className="w-4 h-4" /></Button>
+              <Button onClick={zoomOut} size="sm" className="w-9 h-9 p-0 bg-white text-gray-800 hover:bg-gray-200 shadow-sm border"><ZoomOut className="w-4 h-4" /></Button>
+              <Button onClick={goHome} size="sm" className="w-9 h-9 p-0 bg-white text-gray-800 hover:bg-gray-200 shadow-sm border"><Home className="w-4 h-4" /></Button>
+              <Button onClick={toggleFullscreen} size="sm" className="w-9 h-9 p-0 bg-white text-gray-800 hover:bg-gray-200 shadow-sm border"><Expand className="w-4 h-4" /></Button>
+          </div>
+          
+          {/* The map container */}
+          <div className="flex-1">
+              <div ref={mapRef} className="w-full h-full" />
+          </div>
+      </div>
 
         <div className={`bg-white shadow-lg z-20 transition-transform duration-300 border-l ${isInfoPanelOpen ? "translate-x-0" : "translate-x-full"}`} style={{ width: "350px" }}>
             <div className="p-4 h-full overflow-y-auto flex flex-col gap-8">
