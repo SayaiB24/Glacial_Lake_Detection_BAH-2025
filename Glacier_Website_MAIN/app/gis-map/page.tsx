@@ -6,14 +6,18 @@ import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import {
   Search, Layers, Home, ZoomIn, ZoomOut, Ruler, Expand, ChevronLeft, MapIcon, ChevronDown,
-  Image as ImageIcon, LineChart, AlertTriangle
+  Image as ImageIcon, LineChart, AlertTriangle, BarChart3
 } from "lucide-react"
 import Link from "next/link"
-
 import L from "leaflet";
 import "leaflet/dist/leaflet.css";
 import "leaflet-draw";
 import "leaflet-draw/dist/leaflet.draw.css";
+import { Bar } from 'react-chartjs-2';
+import { Chart as ChartJS, CategoryScale, LinearScale, BarElement, Title, Tooltip, Legend, ChartOptions } from 'chart.js';
+
+// Register ChartJS components
+ChartJS.register(CategoryScale, LinearScale, BarElement, Title, Tooltip, Legend);
 
 const baseLayerSources = {
   satellite: { url: 'https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}', attribution: 'Tiles &copy; Esri' },
@@ -37,7 +41,6 @@ function GISMap() {
   const drawnItemsRef = useRef<any>(null)
   const [isLayerPanelOpen, setIsLayerPanelOpen] = useState(true)
   const [searchQuery, setSearchQuery] = useState("")
-
   const [isDrawing, setIsDrawing] = useState(false);
   const [drawnArea, setDrawnArea] = useState<any>(null);
   const [isProcessing, setIsProcessing] = useState(false);
@@ -45,6 +48,7 @@ function GISMap() {
   const [analysisResult, setAnalysisResult] = useState<any>(null);
   const [isResultsOpen, setIsResultsOpen] = useState(true);
   const [riskAlerts, setRiskAlerts] = useState<RiskAlert[]>([]);
+  const [showHimalayaGraph, setShowHimalayaGraph] = useState(false);
   const analysisLayerRef = useRef<any>(null);
   const drawControlRef = useRef<any>(null);
 
@@ -53,6 +57,45 @@ function GISMap() {
     { id: "terrain", name: "Terrain", enabled: false, icon: MapIcon },
     { id: "hybrid", name: "Hybrid", enabled: true, icon: MapIcon },
   ]);
+
+  // Data for the Himalaya glacial lakes graph
+  const himalayaLakesData = {
+    labels: ['Ganga', 'Brahmaputra', 'Indus'],
+    datasets: [
+      {
+        label: 'Number of Lakes',
+        data: [1020, 1530, 850],
+        backgroundColor: [
+          'rgba(255, 99, 132, 0.2)',
+          'rgba(54, 162, 235, 0.2)',
+          'rgba(255, 206, 86, 0.2)',
+        ],
+        borderColor: [
+          'rgba(255, 99, 132, 1)',
+          'rgba(54, 162, 235, 1)',
+          'rgba(255, 206, 86, 1)',
+        ],
+        borderWidth: 1,
+      },
+    ],
+  };
+
+  const chartOptions: ChartOptions<'bar'> = {
+    responsive: true,
+    maintainAspectRatio: false,
+    plugins: {
+      legend: {
+        position: 'top' as const,
+      },
+      title: {
+        display: true,
+        text: 'Lakes by River Basin',
+        font: {
+          size: 14,
+        }
+      },
+    },
+  };
 
   useEffect(() => {
     if (mapInstance.current) return;
@@ -97,7 +140,7 @@ function GISMap() {
             }
         });
     };
-    
+
     createMap(initialCenter, initialZoom);
 
     // Fetch risk alerts
@@ -111,7 +154,7 @@ function GISMap() {
         }
     };
     fetchRiskAlerts();
-    
+
     return () => {
       if (mapInstance.current) {
         mapInstance.current.remove();
@@ -139,7 +182,7 @@ function GISMap() {
         analysisLayerRef.current = null;
     }
   };
-  
+
   useEffect(() => {
     const handleKeyDown = (event: KeyboardEvent) => {
         if (event.key === 'Escape') {
@@ -151,7 +194,6 @@ function GISMap() {
         window.removeEventListener('keydown', handleKeyDown);
     };
   }, [isDrawing]);
-
 
   const handleEnableDrawing = () => {
     handleExitAoiMode();
@@ -219,7 +261,7 @@ function GISMap() {
     if(tool === 'distance') new L.Draw.Polyline(mapInstance.current, drawOptions.polyline).enable();
     if(tool === 'area') new L.Draw.Polygon(mapInstance.current, drawOptions.polygon).enable();
   };
-  
+
   const toggleFullscreen = () => {
     if (!document.fullscreenElement) pageContainerRef.current?.requestFullscreen();
     else document.exitFullscreen();
@@ -238,29 +280,29 @@ function GISMap() {
   }
 
   return (
-    <div className="h-screen flex flex-col bg-gray-50" ref={pageContainerRef}>
-      <header className="bg-white shadow-sm border-b z-10 h-16">
-        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 h-full">
-          <div className="flex justify-between items-center h-full">
-            <Link href="/" className="flex items-center space-x-2">
-                <div className="w-8 h-8 bg-blue-600 rounded-lg flex items-center justify-center"><span className="text-white font-bold text-sm">❄</span></div>
-                <span className="text-xl font-bold text-gray-900">GlacierWatch</span>
-            </Link>
-            <div className="relative">
-                <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-400 w-4 h-4" />
-                <Input placeholder="Search on map..." className="pl-10 w-64" value={searchQuery} onChange={(e) => setSearchQuery(e.target.value)} />
+      <div className="h-screen flex flex-col bg-gray-50" ref={pageContainerRef}>
+        <header className="bg-white shadow-sm border-b z-10 h-16">
+          <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 h-full">
+            <div className="flex justify-between items-center h-full">
+              <Link href="/" className="flex items-center space-x-2">
+                  <div className="w-8 h-8 bg-blue-600 rounded-lg flex items-center justify-center"><span className="text-white font-bold text-sm">❄</span></div>
+                  <span className="text-xl font-bold text-gray-900">GlacierWatch</span>
+              </Link>
+              <div className="relative">
+                  <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-400 w-4 h-4" />
+                  <Input placeholder="Search on map..." className="pl-10 w-64" value={searchQuery} onChange={(e) => setSearchQuery(e.target.value)} />
+              </div>
             </div>
           </div>
-        </div>
-      </header>
+        </header>
 
       <div className="flex-1 flex relative overflow-hidden">
-        <div className={`bg-white shadow-lg z-20 transition-all duration-300 border-r ${isLayerPanelOpen ? 'ml-0' : '-ml-[300px]'}`} style={{ width: "300px" }}>
-            <div className="p-4 border-b bg-gray-50 flex items-center justify-between">
+        <div className={`bg-white shadow-lg z-20 transition-all duration-300 border-r flex flex-col h-full ${isLayerPanelOpen ? 'ml-0' : '-ml-[300px]'}`} style={{ width: "300px" }}>
+            <div className="p-4 border-b bg-gray-50 flex items-center justify-between flex-shrink-0">
                 <h3 className="text-lg font-semibold flex items-center text-gray-700"><Layers className="w-5 h-5 mr-2" />Map Layers</h3>
                 <Button variant="ghost" size="sm" onClick={() => setIsLayerPanelOpen(false)}><ChevronLeft className="w-4 h-4" /></Button>
             </div>
-            <div className="p-4 space-y-4 overflow-y-auto">
+            <div className="flex-1 p-4 space-y-4 overflow-y-auto">
                 <div className="space-y-2">
                     <div className="flex items-center space-x-2 text-sm font-medium text-gray-700 mb-2"><MapIcon className="w-4 h-4" /><span>Base Layers</span></div>
                     {layers.map((layer) => (
@@ -270,13 +312,24 @@ function GISMap() {
                         </div>
                     ))}
                 </div>
-                
+
                 <div className="pt-4 border-t">
                     <h4 className="text-sm font-medium text-gray-700 mb-3">Analysis Tools</h4>
                     <div className="space-y-2">
                         <Button onClick={() => startMeasuring('distance')} variant="outline" size="sm" className="w-full justify-start bg-transparent"><Ruler className="w-4 h-4 mr-2" />Measure Distance</Button>
                         <Button onClick={() => startMeasuring('area')} variant="outline" size="sm" className="w-full justify-start bg-transparent"><MapIcon className="w-4 h-4 mr-2" />Measure Area</Button>
                     </div>
+                </div>
+                <div className="pt-4 border-t">
+                    <Button onClick={() => setShowHimalayaGraph(v => !v)} variant="outline" size="sm" className="w-full justify-start bg-transparent">
+                        <BarChart3 className="w-4 h-4 mr-2" />
+                        Himalaya glacial lakes
+                    </Button>
+                    {showHimalayaGraph && (
+                        <div className="mt-4 h-[300px]">
+                            <Bar data={himalayaLakesData} options={chartOptions} />
+                        </div>
+                    )}
                 </div>
             </div>
         </div>
@@ -292,13 +345,13 @@ function GISMap() {
                 <div ref={mapRef} className="w-full h-full" />
             </div>
         </div>
-        
+
         <div className={`bg-white shadow-lg z-20 transition-transform duration-300 border-l`} style={{ width: "350px" }}>
             <div className="p-4 h-full overflow-y-auto flex flex-col">
                 {/* --- Section 1: Area of Interest --- */}
                 <div className="pb-4">
                     <h3 className="text-lg font-semibold text-gray-800 pb-3 border-b mb-4">Area of Interest Analysis</h3>
-                    
+
                     <div className="space-y-3">
                         <p className="text-sm text-gray-600">Define a rectangular area on the map to run real-time lake detection.</p>
                         {!isDrawing ? (
@@ -386,7 +439,6 @@ function GISMap() {
                 </div>
             </div>
         </div>
-
       </div>
     </div>
   )

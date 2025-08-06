@@ -60,10 +60,10 @@ export default function HomePage() {
                 <Link href="/" className="text-gray-900 font-medium">Home</Link>
                 <Link href="/gis-map" className="text-gray-600 hover:text-gray-900">Interactive Map</Link>
                 <Link href="/reports" className="text-gray-600 hover:text-gray-900">Reports</Link>
-                <Link href="/data" className="text-gray-600 hover:text-gray-900">Data</Link>
+                {/*<Link href="/data" className="text-gray-600 hover:text-gray-900">Data</Link>*/}
                 <Link href="/about" className="text-gray-600 hover:text-gray-900">About</Link>
               </nav>
-              <Button>Sign In</Button>
+              {/*<Button>Sign In</Button>*/}
             </div>
           </div>
         </div>

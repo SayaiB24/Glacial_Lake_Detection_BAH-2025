@@ -80,11 +80,35 @@
   }
 }
 
-@layer base {
-  * {
-    @apply border-border;
+/* Add to app/globals.css */
+
+.glass-container-blue {
+    background: rgba(255, 255, 255, 0.6);
+    backdrop-filter: blur(10px);
+    border: 1px solid rgba(30, 64, 175, 0.1);
+}
+.btn-analyze-blue {
+    background: #2563eb; /* blue-600 */
+    color: #ffffff;
+}
+.btn-analyze-blue:hover {
+    background: #1d4ed8; /* blue-800 */
+}
+.file-input-label-blue {
+    background-color: #f0f9ff; /* blue-50 */
+    border: 2px dashed #93c5fd; /* blue-300 */
+    color: #374151; /* gray-700 */
+    border-radius: 0.5rem;
+    text-align: center;
+    cursor: pointer;
+}
+/* Add to the end of app/globals.css */
+
+@keyframes bounce {
+  0%, 100% {
+    transform: translateY(0);
   }
-  body {
-    @apply bg-background text-foreground;
+  50% {
+    transform: translateY(-20px);
   }
 }
