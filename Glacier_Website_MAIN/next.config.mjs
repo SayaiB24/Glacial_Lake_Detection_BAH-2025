@@ -9,6 +9,20 @@ const nextConfig = {
   images: {
     unoptimized: true,
   },
-}
+  webpack: (config, { buildId, dev, isServer, defaultLoaders, webpack }) => {
+    // Add a rule to handle .geojson files
+    config.module.rules.push({
+      test: /\.geojson$/,
+      use: [
+        {
+          loader: 'json-loader',
+        },
+      ],
+    });
 
-export default nextConfig
+    // Return the modified config
+    return config;
+  },
+};
+
+export default nextConfig;

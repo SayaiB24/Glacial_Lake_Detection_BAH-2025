@@ -129,8 +129,3 @@
     color: #ffffff;
     border-color: #3b82f6;
 }
-.glass-container {
-    background: rgba(23, 42, 77, 0.6);
-    backdrop-filter: blur(10px);
-    border: 1px solid rgba(255, 255, 255, 0.1);
- }
