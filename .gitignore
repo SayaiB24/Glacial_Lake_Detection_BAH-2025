@@ -1,8 +1,11 @@
 
-glacial-lake-detection-BAH-2025-venv/ 
-.gitignore 
+glacial-lake-detection-BAH-2025-venv/
 data
 .venv/
+
+# Python
+__pycache__/
+*.py[cod]
 glacial-lake-detection-BAH-2025-venv/ 
 Resources/
 notebooks/.ipynb_checkpoints/
