@@ -30,7 +30,12 @@ from tqdm import tqdm
 # Make src/ importable when running this file directly from anywhere.
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "src"))
 
-from model import N_CHANNELS, load_hybrid_model, normalize_stack  # noqa: E402
+from model import (  # noqa: E402
+    N_CHANNELS,
+    load_hybrid_model,
+    mc_dropout_predict,
+    normalize_stack,
+)
 
 
 # =================================================================== #
@@ -86,8 +91,15 @@ def predict_large_image(
     chunk_output_dir=None,
     patch_size=256,
     threshold=0.5,
+    mc_passes=0,
+    uncertainty_path=None,
 ):
-    """Run tiled inference across a large GeoTIFF and write a stitched mask."""
+    """Run tiled inference across a large GeoTIFF and write a stitched mask.
+
+    When ``mc_passes`` is 2 or more, each tile is predicted with Monte Carlo
+    dropout and a pixel-wise uncertainty raster is written to
+    ``uncertainty_path`` alongside the binary mask.
+    """
     if chunk_output_dir:
         os.makedirs(chunk_output_dir, exist_ok=True)
 
@@ -104,8 +116,16 @@ def predict_large_image(
                 f"{input_image_path} has {src.count} bands, expected {N_CHANNELS}."
             )
 
-        profile.update(count=1, dtype="uint8", compress="lzw", nodata=None)
+        mask_profile = dict(profile)
+        mask_profile.update(count=1, dtype="uint8", compress="lzw", nodata=None)
         stitched_prediction = np.zeros((height, width), dtype=np.uint8)
+
+        use_mc = mc_passes >= 2
+        stitched_uncertainty = np.zeros((height, width), dtype=np.float32) if use_mc else None
+        if use_mc:
+            unc_profile = dict(profile)
+            unc_profile.update(count=1, dtype="float32", compress="lzw", nodata=None)
+            print(f"Monte Carlo dropout enabled: {mc_passes} passes per tile.")
 
         print(f"Processing image of size ({width}, {height}) in {patch_size}x{patch_size} tiles...")
 
@@ -141,13 +161,23 @@ def predict_large_image(
 
             tile_tensor = torch.from_numpy(normalized_tile).unsqueeze(0).to(device)
 
-            with torch.no_grad():
-                logits = model(tile_tensor)
-                probs = torch.sigmoid(logits)
-                pred_mask = (probs > threshold).cpu().squeeze(0).squeeze(0).numpy().astype(np.uint8)
+            if use_mc:
+                mean_probs, std_probs = mc_dropout_predict(model, tile_tensor, n_passes=mc_passes)
+                prob_map = mean_probs[0, 0]
+                uncertainty = std_probs[0, 0]
+            else:
+                with torch.no_grad():
+                    prob_map = torch.sigmoid(model(tile_tensor))[0, 0].cpu().numpy()
+                uncertainty = None
+
+            pred_mask = (prob_map > threshold).astype(np.uint8)
 
             # Discard the padded region so the mask matches the source window.
             pred_mask = pred_mask[:tile_height, :tile_width]
+            if uncertainty is not None:
+                stitched_uncertainty[
+                    row_off : row_off + tile_height, col_off : col_off + tile_width
+                ] = uncertainty[:tile_height, :tile_width]
 
             if np.any(pred_mask):
                 detections += 1
@@ -163,15 +193,28 @@ def predict_large_image(
             ] = pred_mask
 
     print(f"Saving stitched mask to {output_mask_path} ...")
-    with rasterio.open(output_mask_path, "w", **profile) as dst:
+    with rasterio.open(output_mask_path, "w", **mask_profile) as dst:
         dst.write(stitched_prediction, 1)
+
+    if use_mc:
+        if not uncertainty_path:
+            base, ext = os.path.splitext(output_mask_path)
+            uncertainty_path = f"{base}_uncertainty{ext}"
+        print(f"Saving uncertainty map to {uncertainty_path} ...")
+        with rasterio.open(uncertainty_path, "w", **unc_profile) as dst:
+            dst.write(stitched_uncertainty, 1)
 
     lake_pixels = int(stitched_prediction.sum())
     print(
         f"Done. {detections} tile(s) contained detections; "
         f"{lake_pixels:,} lake pixels total."
     )
-    return stitched_prediction
+    if use_mc:
+        print(
+            f"Uncertainty: mean {stitched_uncertainty.mean():.4f}, "
+            f"max {stitched_uncertainty.max():.4f} (std-dev across {mc_passes} passes)."
+        )
+    return stitched_prediction, stitched_uncertainty
 
 
 # =================================================================== #
@@ -201,6 +244,17 @@ def parse_args(argv=None):
         default="cuda" if torch.cuda.is_available() else "cpu",
         help="Torch device to run on",
     )
+    parser.add_argument(
+        "--mc-passes",
+        type=int,
+        default=0,
+        help="Monte Carlo dropout passes per tile; 0 disables, 2+ writes an uncertainty map",
+    )
+    parser.add_argument(
+        "--uncertainty-output",
+        default=None,
+        help="Where to write the uncertainty map (defaults to <output>_uncertainty.tif)",
+    )
     return parser.parse_args(argv)
 
 
@@ -209,6 +263,8 @@ def main(argv=None):
 
     if args.patch_size % 32:
         raise SystemExit(f"--patch-size must be a multiple of 32, got {args.patch_size}")
+    if args.mc_passes == 1:
+        raise SystemExit("--mc-passes must be 0 (disabled) or >= 2; a single pass has no spread")
     for path, label in ((args.model, "Model"), (args.input, "Input image")):
         if not os.path.exists(path):
             raise SystemExit(f"{label} not found: {path}")
@@ -225,6 +281,8 @@ def main(argv=None):
         chunk_output_dir=args.chunk_dir,
         patch_size=args.patch_size,
         threshold=args.threshold,
+        mc_passes=args.mc_passes,
+        uncertainty_path=args.uncertainty_output,
     )
 
 

@@ -253,10 +253,64 @@ def enable_mc_dropout(model):
     """Re-enable dropout while keeping BatchNorm in eval mode.
 
     Required for Monte Carlo dropout uncertainty estimation: calling
-    ``model.train()`` would also put BatchNorm into training mode and corrupt
-    the running statistics.
+    ``model.train()`` would also put BatchNorm into training mode, so it would
+    update its running statistics from the inference batch and normalise using
+    batch statistics instead of the ones learned during training. That both
+    corrupts the checkpoint's buffers and makes every pass depend on batch
+    composition, which contaminates the uncertainty estimate.
     """
+    model.eval()
     for module in model.modules():
         if isinstance(module, nn.Dropout):
             module.train()
     return model
+
+
+@torch.no_grad()
+def mc_dropout_predict(model, image_tensor, n_passes=30):
+    """Estimate a prediction and its pixel-wise uncertainty via MC dropout.
+
+    Runs ``n_passes`` stochastic forward passes with dropout active and
+    BatchNorm frozen, then reduces them to a mean probability map and the
+    per-pixel standard deviation across passes.
+
+    Args:
+        model: a trained ``GlacialLake_HybridNet``.
+        image_tensor: input of shape ``(B, C, H, W)``, already normalised.
+        n_passes: number of stochastic passes; must be at least 2.
+
+    Returns:
+        ``(mean_probs, std_probs)`` as numpy arrays of shape ``(B, 1, H, W)``.
+        ``std_probs`` is the pixel-wise confidence map: low means the model
+        agrees with itself across passes, high means it does not.
+
+    Raises:
+        ValueError: if ``n_passes`` is less than 2.
+    """
+    if n_passes < 2:
+        raise ValueError(f"n_passes must be >= 2 to estimate a spread, got {n_passes}")
+
+    was_training = model.training
+    enable_mc_dropout(model)
+
+    # Welford's online algorithm: keeps memory constant in n_passes rather than
+    # stacking every prediction, which matters for large tiles.
+    mean = None
+    m2 = None
+    for i in range(1, n_passes + 1):
+        probs = torch.sigmoid(model(image_tensor))
+        if mean is None:
+            mean = torch.zeros_like(probs)
+            m2 = torch.zeros_like(probs)
+        delta = probs - mean
+        mean += delta / i
+        m2 += delta * (probs - mean)
+
+    variance = m2 / (n_passes - 1)  # sample variance
+
+    if was_training:
+        model.train()
+    else:
+        model.eval()
+
+    return mean.cpu().numpy(), variance.sqrt().cpu().numpy()

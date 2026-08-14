@@ -40,6 +40,7 @@ import {
   ChartOptions,
 } from "chart.js";
 import { booleanPointInPolygon } from "@turf/boolean-point-in-polygon";
+import { mannKendall, describeTrend, type MannKendallResult } from "@/lib/mannKendall";
 
 // Register ChartJS components
 ChartJS.register(CategoryScale, LinearScale, BarElement, LineElement, PointElement, Title, Tooltip, Legend);
@@ -209,6 +210,26 @@ function GISMap() {
         },
       ],
     };
+  };
+
+  // Mann-Kendall trend test over the yearly lake-area series. Years with no
+  // usable imagery report an area of 0, which would read as a real collapse in
+  // lake extent, so they are excluded rather than treated as observations.
+  const getTrendAnalysis = (): MannKendallResult | null => {
+    if (!timeSeriesResult) return null;
+    const usable = timeSeriesResult.timeSeriesData.filter(
+      (d) => d.imageCount > 0 && Number.isFinite(d.area),
+    );
+    if (usable.length < 3) return null;
+    try {
+      return mannKendall(
+        usable.map((d) => d.area),
+        usable.map((d) => d.year),
+      );
+    } catch (error) {
+      console.warn("Mann-Kendall trend test failed:", error);
+      return null;
+    }
   };
 
   const timeSeriesChartOptions: ChartOptions<"line"> = {
@@ -1035,6 +1056,58 @@ function GISMap() {
                                             </div>
                                         )}
                                         
+                                        {/* Mann-Kendall Trend Detection */}
+                                        {(() => {
+                                            const trend = getTrendAnalysis();
+                                            if (!trend) {
+                                                return (
+                                                    <div className="p-3 bg-white rounded-md border text-xs text-gray-500">
+                                                        <h5 className="font-semibold mb-1 text-gray-700">Trend Detection</h5>
+                                                        Needs at least 3 years with imagery to run the Mann&ndash;Kendall test.
+                                                    </div>
+                                                );
+                                            }
+                                            const tone = !trend.significant
+                                                ? "bg-gray-50 border-gray-300 text-gray-700"
+                                                : trend.trend === "increasing"
+                                                  ? "bg-red-50 border-red-300 text-red-900"
+                                                  : "bg-blue-50 border-blue-300 text-blue-900";
+                                            return (
+                                                <div className={`p-3 rounded-md border text-xs ${tone}`}>
+                                                    <h5 className="font-semibold mb-2">
+                                                        Trend Detection (Mann&ndash;Kendall)
+                                                    </h5>
+                                                    <p className="mb-2">{describeTrend(trend)}</p>
+                                                    <div className="grid grid-cols-2 gap-x-3 gap-y-1 font-mono">
+                                                        <div className="flex justify-between">
+                                                            <span>Sen&apos;s slope</span>
+                                                            <span>{trend.sensSlope >= 0 ? "+" : ""}{trend.sensSlope.toFixed(3)} ha/yr</span>
+                                                        </div>
+                                                        <div className="flex justify-between">
+                                                            <span>Total change</span>
+                                                            <span>{trend.totalChange >= 0 ? "+" : ""}{trend.totalChange.toFixed(2)} ha</span>
+                                                        </div>
+                                                        <div className="flex justify-between">
+                                                            <span>p-value</span>
+                                                            <span>{trend.pValue < 0.001 ? "< 0.001" : trend.pValue.toFixed(3)}</span>
+                                                        </div>
+                                                        <div className="flex justify-between">
+                                                            <span>Kendall&apos;s &tau;</span>
+                                                            <span>{trend.tau.toFixed(3)}</span>
+                                                        </div>
+                                                        <div className="flex justify-between">
+                                                            <span>S statistic</span>
+                                                            <span>{trend.S}</span>
+                                                        </div>
+                                                        <div className="flex justify-between">
+                                                            <span>Years used</span>
+                                                            <span>{trend.n}</span>
+                                                        </div>
+                                                    </div>
+                                                </div>
+                                            );
+                                        })()}
+
                                         {/* Data Quality Summary */}
                                         <div className="p-3 bg-white rounded-md border text-xs">
                                             <h5 className="font-semibold mb-2">Data Quality Summary</h5>

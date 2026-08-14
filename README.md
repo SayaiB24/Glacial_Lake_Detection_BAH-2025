@@ -165,6 +165,40 @@ detection.
 `src/model.py` is the single source of truth for both the architecture and the
 input normalisation — import from it rather than copying the definitions.
 
+### Uncertainty maps (Monte Carlo Dropout)
+
+Add `--mc-passes N` (N ≥ 2) to run each tile through N stochastic forward passes
+with dropout active and BatchNorm frozen. Alongside the binary mask, this writes
+a `float32` raster of the per-pixel standard deviation across passes — the
+pixel-wise confidence map. Low values mean the model agrees with itself; high
+values flag boundaries and ambiguous terrain worth manual review.
+
+```bash
+.venv\Scripts\python.exe notebooks/predict.py ^
+    --model notebooks/hybrid_model_best.pth ^
+    --input data/LISS3/processed/LISS3_9_input_stack.tif ^
+    --output notebooks/Output/mask.tif ^
+    --mc-passes 30
+```
+
+The uncertainty raster defaults to `<output>_uncertainty.tif`; override with
+`--uncertainty-output`. 20–50 passes is typical; cost scales linearly.
+
+### Trend detection (Mann–Kendall)
+
+`Glacier_Website_MAIN/lib/mannKendall.ts` implements the non-parametric
+Mann–Kendall trend test with tie-corrected variance, plus Sen's slope for the
+magnitude of change. The GIS map runs it over the yearly lake-area series and
+reports direction, p-value, Kendall's τ and the rate in ha/yr.
+
+Years with no cloud-free imagery are excluded rather than treated as zero area,
+which would otherwise read as a lake collapsing. At least 3 usable years are
+required.
+
+The implementation is validated against an independent Python reference across
+10 series — monotonic, tied, uneven spacing, gaps and minimum length — agreeing
+to within 2e-7 on p-values.
+
 ---
 
 ## Known issues
@@ -189,6 +223,13 @@ input normalisation — import from it rather than copying the definitions.
 - **Edge-tile handling in `predict.py`.** Tile PNGs were rendered from the padded,
   partially-normalised tile while the mask was cropped, so overlays misaligned at
   image edges. Stitching is now verified to cover every pixel exactly.
+- **Monte Carlo Dropout corrupted BatchNorm.** `generate_uncertainty_map()` called
+  `model.train()` to re-enable dropout, which also switched every BatchNorm layer
+  into training mode — measured on this architecture, all 32 layers had their
+  running statistics overwritten by a single call, and each pass then normalised
+  using batch rather than learned statistics. `enable_mc_dropout()` in
+  `src/model.py` toggles only `nn.Dropout`, leaving BatchNorm frozen (verified:
+  0 of 32 layers altered).
 
 ### Outstanding
 
