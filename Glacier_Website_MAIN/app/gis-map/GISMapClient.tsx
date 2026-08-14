@@ -288,7 +288,9 @@ function GISMap() {
       } catch (error) {
         if (!cancelled) {
           const detail = error instanceof Error ? error.message : "Unknown error";
-          console.error("Failed to load /sikkim_shape.geojson:", detail);
+          // Expected when the (gitignored) inventory has not been supplied, so warn
+          // rather than error — console.error trips the Next.js dev error overlay.
+          console.warn("Lake inventory not loaded from /sikkim_shape.geojson:", detail);
           setLakeDataError(
             "Lake inventory unavailable — add sikkim_shape.geojson to the public/ folder to enable the lake layer."
           );
@@ -728,7 +730,12 @@ function GISMap() {
               <Expand className="w-4 h-4" />
             </Button>
           </div>
-          <div className="flex-1">
+          <div className="flex-1 relative">
+            {lakeDataError && (
+              <div className="absolute top-4 left-1/2 -translate-x-1/2 z-[1000] max-w-xl rounded-md border border-amber-300 bg-amber-50 px-4 py-3 text-sm text-amber-900 shadow-md">
+                {lakeDataError}
+              </div>
+            )}
             <div ref={mapRef} className="w-full h-full" />
           </div>
         </div>

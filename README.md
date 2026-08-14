@@ -75,11 +75,43 @@ This is the **full JSON** of a Google Earth Engine service-account key, on one l
 
 ## ML pipeline
 
-### Dependencies
+### Environment setup
+
+Use **Python 3.11**. Python 3.13/3.14 will not work — torch and rasterio do not
+publish wheels for them yet.
 
 ```bash
-pip install torch torchvision rasterio numpy matplotlib tqdm \
-            segmentation-models-pytorch albumentations opencv-python earthengine-api
+py -3.11 -m venv .venv
+.venv\Scripts\python.exe -m pip install --upgrade pip
+.venv\Scripts\python.exe -m pip install -r requirements.txt
+```
+
+Verify the environment:
+
+```bash
+.venv\Scripts\python.exe verify_env.py
+```
+
+This checks every import and runs a real `1×8×256×256` forward pass through a
+rebuild of `GlacialLake_HybridNet` (32.1M parameters), so a pass means the whole
+stack genuinely works rather than merely being installed.
+
+`requirements.txt` pins the **CPU** build of torch — no GPU required, and the
+notebooks already fall back to CPU. On a CUDA machine, remove the
+`--extra-index-url` line and install torch from
+<https://pytorch.org/get-started/locally/> first.
+
+> `--only-binary=:all:` in `requirements.txt` is deliberate. Newer `stringzilla`
+> (pulled in by `albumentations` → `albucore`) ships no prebuilt Windows wheel and
+> will try to compile from source, which fails without a C toolchain.
+
+### Running the notebooks
+
+A Jupyter kernel named **Python (GLOF .venv)** is registered by the setup above.
+Select it from the kernel picker in VS Code or JupyterLab:
+
+```bash
+.venv\Scripts\python.exe -m jupyter lab
 ```
 
 ### Model input format

@@ -1,0 +1,42 @@
+# Python dependencies for the glacial lake detection pipeline.
+#
+# Verified working on Python 3.11.9 (Windows). Do NOT use Python 3.14 —
+# torch and rasterio do not publish wheels for it yet.
+#
+# Setup:
+#   py -3.11 -m venv .venv
+#   .venv\Scripts\python.exe -m pip install --upgrade pip
+#   .venv\Scripts\python.exe -m pip install -r requirements.txt
+#
+# This installs the CPU build of torch (no NVIDIA GPU required). For a CUDA
+# machine, drop the --extra-index-url line below and install torch separately
+# from https://pytorch.org/get-started/locally/ before running this file.
+#
+# --only-binary is required: newer stringzilla (via albumentations -> albucore)
+# has no prebuilt Windows wheel and would otherwise try to compile from source.
+
+--extra-index-url https://download.pytorch.org/whl/cpu
+--only-binary=:all:
+
+# Deep learning
+torch==2.13.0+cpu
+torchvision==0.28.0+cpu
+segmentation-models-pytorch==0.5.0
+
+# Geospatial / raster IO
+rasterio==1.4.4
+earthengine-api==1.7.39
+
+# Imaging and augmentation
+opencv-python==5.0.0.93
+albumentations==2.0.8
+
+# Numerics and plotting
+numpy==2.4.4
+scikit-learn==1.9.0
+matplotlib==3.11.1
+tqdm==4.70.0
+
+# Notebook environment
+jupyter==1.1.1
+ipykernel==7.3.0
