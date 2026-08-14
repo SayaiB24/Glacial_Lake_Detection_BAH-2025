@@ -1,201 +1,232 @@
+"""Tiled inference over a large 8-band GeoTIFF using the hybrid segmentation model.
+
+Example:
+    python notebooks/predict.py \
+        --model notebooks/hybrid_model_best.pth \
+        --input data/LISS3/processed/LISS3_9_input_stack.tif \
+        --output notebooks/Output/LISS3_9_predicted_mask.tif \
+        --chunk-dir notebooks/Output/chunks
+
+Run with --help for all options.
+"""
+
+from __future__ import annotations
+
+import argparse
 import os
-import torch
-import rasterio
-import numpy as np
-from tqdm import tqdm
-import segmentation_models_pytorch as smp
+import sys
 from itertools import product
+
+import matplotlib
+
+matplotlib.use("Agg")  # no display needed when only writing PNGs
+
 import matplotlib.pyplot as plt
-from matplotlib import cm
+import numpy as np
+import rasterio
+import torch
+from tqdm import tqdm
+
+# Make src/ importable when running this file directly from anywhere.
+sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "src"))
+
+from model import N_CHANNELS, load_hybrid_model, normalize_stack  # noqa: E402
+
 
 # =================================================================== #
-#                       UTILITY FUNCTIONS
+#                          VISUALISATION HELPERS
 # =================================================================== #
 
-def normalize_tile(tile):
-    """Applies the exact same normalization as the GlacialLakeDataset."""
-    # LISS-3 Bands and Indices
-    tile[:4, :, :] /= 1023.0
-    # Indices (e.g., NDWI) assumed to be in [-1, 1], scaled to [0, 1]
-    tile[4:, :, :] = (tile[4:, :, :] + 1.0) / 2.0
-    # Clip all values to ensure they are in the [0, 1] range
-    tile = np.clip(tile, 0.0, 1.0)
-    return tile
 
 def stretch_for_display(band_array):
-    """Performs percentile contrast stretching on a 3-band numpy array for visualization."""
-    stretched_array = np.zeros_like(band_array, dtype=np.float32)
+    """Percentile contrast stretch on an (H, W, 3) array for visualisation."""
+    stretched = np.zeros_like(band_array, dtype=np.float32)
     for i in range(3):
         p2, p98 = np.percentile(band_array[:, :, i], (2, 98))
-        if p98 - p2 > 1e-6:  # Avoid division by zero
-            stretched_array[:, :, i] = (band_array[:, :, i] - p2) / (p98 - p2)
-    return np.clip(stretched_array, 0, 1)
+        if p98 - p2 > 1e-6:
+            stretched[:, :, i] = (band_array[:, :, i] - p2) / (p98 - p2)
+    return np.clip(stretched, 0, 1)
+
 
 def save_tile_with_mask(tile, pred_mask, output_path, alpha=0.4):
-    """
-    Saves a PNG of the input tile with the predicted mask overlaid.
-    
+    """Write a false-colour PNG of ``tile`` with ``pred_mask`` overlaid in red.
+
     Args:
-        tile: Input tile (numpy array, shape: [channels, height, width]).
-        pred_mask: Predicted binary mask (numpy array, shape: [height, width]).
-        output_path: Path to save the PNG.
-        alpha: Transparency of the mask overlay.
+        tile: raw (unnormalised) tile, shape (C, H, W), cropped to the mask size.
+        pred_mask: binary mask, shape (H, W).
+        output_path: destination PNG path.
+        alpha: overlay transparency.
     """
-    # Create false-color RGB image (using bands 2, 1, 0 for NIR, Red, Green)
-    rgb_tile = tile[[2, 1, 0], :, :].transpose(1, 2, 0)  # Shape: [height, width, 3]
-    rgb_tile = stretch_for_display(rgb_tile)  # Stretch for better visualization
-    
-    # Create figure
+    # NIR/Red/Green false colour from bands 2, 1, 0.
+    rgb_tile = tile[[2, 1, 0], :, :].transpose(1, 2, 0)
+    rgb_tile = stretch_for_display(rgb_tile)
+
     fig, ax = plt.subplots(figsize=(5, 5))
     ax.imshow(rgb_tile)
-    
-    # Overlay mask (red where pred_mask == 1)
+
     mask_rgba = np.zeros((pred_mask.shape[0], pred_mask.shape[1], 4))
-    mask_rgba[pred_mask == 1] = [1, 0, 0, alpha]  # Red with transparency
+    mask_rgba[pred_mask == 1] = [1, 0, 0, alpha]
     ax.imshow(mask_rgba)
-    
-    ax.axis('off')
-    plt.savefig(output_path, bbox_inches='tight', pad_inches=0, dpi=100)
+
+    ax.axis("off")
+    plt.savefig(output_path, bbox_inches="tight", pad_inches=0, dpi=100)
     plt.close(fig)
 
-def predict_large_image(model, device, input_image_path, output_mask_path, chunk_output_dir, patch_size=256, threshold=0.5):
-    """
-    Reads a large GeoTIFF, runs inference tile by tile, saves the stitched mask,
-    and saves PNGs for tiles where lakes are detected.
-    
-    Args:
-        model: Trained segmentation model.
-        device: Device to run inference on ('cuda' or 'cpu').
-        input_image_path: Path to the input GeoTIFF.
-        output_mask_path: Path to save the stitched predicted mask.
-        chunk_output_dir: Directory to save PNGs of tiles with lake detections.
-        patch_size: Size of each tile (must be divisible by 32).
-        threshold: Probability threshold for binarizing predictions.
-    """
-    # Create output directory for chunk PNGs
-    os.makedirs(chunk_output_dir, exist_ok=True)
-    
-    # --- 1. Open the large image and prepare the output array ---
+
+# =================================================================== #
+#                              INFERENCE
+# =================================================================== #
+
+
+def predict_large_image(
+    model,
+    device,
+    input_image_path,
+    output_mask_path,
+    chunk_output_dir=None,
+    patch_size=256,
+    threshold=0.5,
+):
+    """Run tiled inference across a large GeoTIFF and write a stitched mask."""
+    if chunk_output_dir:
+        os.makedirs(chunk_output_dir, exist_ok=True)
+
+    output_parent = os.path.dirname(os.path.abspath(output_mask_path))
+    if output_parent:
+        os.makedirs(output_parent, exist_ok=True)
+
     with rasterio.open(input_image_path) as src:
         width, height = src.width, src.height
         profile = src.profile
-        
-        # Update profile for a single-band (mask) output
-        profile.update(count=1, dtype='uint8', compress='lzw')
-        
-        # Create an empty array to store the stitched prediction
+
+        if src.count != N_CHANNELS:
+            raise ValueError(
+                f"{input_image_path} has {src.count} bands, expected {N_CHANNELS}."
+            )
+
+        profile.update(count=1, dtype="uint8", compress="lzw", nodata=None)
         stitched_prediction = np.zeros((height, width), dtype=np.uint8)
-        
-        print(f"Processing image of size ({width}, {height}) with {patch_size}x{patch_size} tiles...")
 
-        # --- 2. Create the grid of tiles to process ---
+        print(f"Processing image of size ({width}, {height}) in {patch_size}x{patch_size} tiles...")
+
         offsets = product(range(0, width, patch_size), range(0, height, patch_size))
-        total_chunks = ((width + patch_size - 1) // patch_size) * ((height + patch_size - 1) // patch_size)
+        total_chunks = ((width + patch_size - 1) // patch_size) * (
+            (height + patch_size - 1) // patch_size
+        )
 
-        # --- 3. Iterate through tiles, preprocess, predict, and stitch ---
+        detections = 0
+        full_window = rasterio.windows.Window(0, 0, width, height)
+
         for col_off, row_off in tqdm(offsets, total=total_chunks, desc="Predicting on tiles"):
             window = rasterio.windows.Window(
                 col_off=col_off, row_off=row_off, width=patch_size, height=patch_size
-            ).intersection(rasterio.windows.Window(0, 0, width, height))
-            
+            ).intersection(full_window)
+
             tile = src.read(window=window).astype(np.float32)
-            
-            # Skip empty or invalid tiles
             if tile.shape[1] == 0 or tile.shape[2] == 0:
                 continue
 
-            # Check number of channels
-            if tile.shape[0] != 8:
-                print(f"Warning: Tile at ({row_off}, {col_off}) has {tile.shape[0]} channels, expected 8. Skipping.")
-                continue
-
-            # Get original tile dimensions
             tile_height, tile_width = tile.shape[1], tile.shape[2]
-            
-            # Pad tile if necessary to make it patch_size x patch_size
+
+            # Normalise BEFORE padding so reflected edges do not skew the scaling.
+            # normalize_stack returns a new array, leaving `tile` raw for the PNG.
+            normalized_tile = normalize_stack(tile)
+
             if tile_height < patch_size or tile_width < patch_size:
-                pad_h = patch_size - tile_height
-                pad_w = patch_size - tile_width
-                tile = np.pad(
-                    tile,
-                    ((0, 0), (0, pad_h), (0, pad_w)),
-                    mode='reflect'
+                normalized_tile = np.pad(
+                    normalized_tile,
+                    ((0, 0), (0, patch_size - tile_height), (0, patch_size - tile_width)),
+                    mode="reflect",
                 )
-            
-            # Preprocess the tile
-            normalized_tile = normalize_tile(tile)
-            
-            # Convert to tensor and add batch dimension
+
             tile_tensor = torch.from_numpy(normalized_tile).unsqueeze(0).to(device)
-            
-            # Verify tile dimensions
-            if tile_tensor.shape[2:] != (patch_size, patch_size):
-                raise RuntimeError(
-                    f"Tile shape {tile_tensor.shape[2:]} not divisible by 32. "
-                    f"Expected ({patch_size}, {patch_size})."
-                )
-            
-            # Run prediction
+
             with torch.no_grad():
                 logits = model(tile_tensor)
                 probs = torch.sigmoid(logits)
-                pred_mask = (probs > threshold).cpu().squeeze().numpy().astype(np.uint8)
-            
-            # Crop the predicted mask back to the original tile size
+                pred_mask = (probs > threshold).cpu().squeeze(0).squeeze(0).numpy().astype(np.uint8)
+
+            # Discard the padded region so the mask matches the source window.
             pred_mask = pred_mask[:tile_height, :tile_width]
-            
-            # Save PNG if lake is detected (non-zero mask)
+
             if np.any(pred_mask):
-                chunk_output_path = os.path.join(chunk_output_dir, f"tile_{row_off}_{col_off}_mask.png")
-                save_tile_with_mask(tile, pred_mask, chunk_output_path)
-                print(f"Saved lake detection PNG at: {chunk_output_path}")
-            
-            # Place the predicted mask into the correct location in the stitched array
-            stitched_prediction[window.row_off:window.row_off + window.height, 
-                               window.col_off:window.col_off + window.width] = pred_mask
+                detections += 1
+                if chunk_output_dir:
+                    chunk_path = os.path.join(
+                        chunk_output_dir, f"tile_{row_off}_{col_off}_mask.png"
+                    )
+                    # Pass the raw, unpadded tile so the overlay lines up.
+                    save_tile_with_mask(tile, pred_mask, chunk_path)
 
-    # --- 4. Save the final stitched mask ---
-    print(f"Saving final stitched mask to {output_mask_path}...")
-    with rasterio.open(output_mask_path, 'w', **profile) as dst:
+            stitched_prediction[
+                row_off : row_off + tile_height, col_off : col_off + tile_width
+            ] = pred_mask
+
+    print(f"Saving stitched mask to {output_mask_path} ...")
+    with rasterio.open(output_mask_path, "w", **profile) as dst:
         dst.write(stitched_prediction, 1)
-        
-    print("✅ Prediction complete!")
 
-# =================================================================== #
-#                         HOW TO RUN
-# =================================================================== #
-if __name__ == '__main__':
-    # --- Configuration ---
-    DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
-    MODEL_PATH = r"C:\Users\Rochan\Desktop\Coding\Glacial_Lale_Detection_BAH-2025\notebooks\unetplusplus_efficientnet-b4_v5.pth"
-    PATCH_SIZE = 256
-    PREDICTION_THRESHOLD = 0.5  # Use the optimal threshold if known
-    CHUNK_OUTPUT_DIR = r"C:\Users\Rochan\Desktop\Coding\Glacial_Lale_Detection_BAH-2025\notebooks\Output\chunks"
-
-    # --- Define input and output paths ---
-    INPUT_IMAGE_PATH = r"C:\Users\Rochan\Desktop\Coding\Glacial_Lale_Detection_BAH-2025\data\LISS3\processed\LISS3_9_input_stack.tif"
-    OUTPUT_MASK_PATH = r"C:\Users\Rochan\Desktop\Coding\Glacial_Lale_Detection_BAH-2025\notebooks\Output\LISS3_9_predicted_mask.tif"
-
-    # --- Load the Model ---
-    print("Loading model...")
-    model = smp.UnetPlusPlus(
-        encoder_name="efficientnet-b4",
-        encoder_weights=None,
-        in_channels=8,
-        classes=1,
+    lake_pixels = int(stitched_prediction.sum())
+    print(
+        f"Done. {detections} tile(s) contained detections; "
+        f"{lake_pixels:,} lake pixels total."
     )
-    model.load_state_dict(torch.load(MODEL_PATH, map_location=DEVICE, weights_only=True))
-    model.to(DEVICE)
-    model.eval()
-    print("✅ Model loaded.")
+    return stitched_prediction
 
-    # --- Run Prediction ---
+
+# =================================================================== #
+#                                  CLI
+# =================================================================== #
+
+
+def parse_args(argv=None):
+    parser = argparse.ArgumentParser(
+        description="Tiled glacial lake segmentation over a large GeoTIFF.",
+        formatter_class=argparse.ArgumentDefaultsHelpFormatter,
+    )
+    parser.add_argument("--model", required=True, help="Path to the trained .pth checkpoint")
+    parser.add_argument("--input", required=True, help="Input 8-band GeoTIFF stack")
+    parser.add_argument("--output", required=True, help="Destination for the predicted mask")
+    parser.add_argument(
+        "--chunk-dir",
+        default=None,
+        help="Optional directory for per-tile PNG previews of detections",
+    )
+    parser.add_argument("--patch-size", type=int, default=256, help="Tile size (multiple of 32)")
+    parser.add_argument(
+        "--threshold", type=float, default=0.5, help="Probability threshold for a lake pixel"
+    )
+    parser.add_argument(
+        "--device",
+        default="cuda" if torch.cuda.is_available() else "cpu",
+        help="Torch device to run on",
+    )
+    return parser.parse_args(argv)
+
+
+def main(argv=None):
+    args = parse_args(argv)
+
+    if args.patch_size % 32:
+        raise SystemExit(f"--patch-size must be a multiple of 32, got {args.patch_size}")
+    for path, label in ((args.model, "Model"), (args.input, "Input image")):
+        if not os.path.exists(path):
+            raise SystemExit(f"{label} not found: {path}")
+
+    print(f"Loading model on {args.device} ...")
+    model = load_hybrid_model(args.model, device=args.device)
+    print("Model loaded.")
+
     predict_large_image(
         model=model,
-        device=DEVICE,
-        input_image_path=INPUT_IMAGE_PATH,
-        output_mask_path=OUTPUT_MASK_PATH,
-        chunk_output_dir=CHUNK_OUTPUT_DIR,
-        patch_size=PATCH_SIZE,
-        threshold=PREDICTION_THRESHOLD
+        device=args.device,
+        input_image_path=args.input,
+        output_mask_path=args.output,
+        chunk_output_dir=args.chunk_dir,
+        patch_size=args.patch_size,
+        threshold=args.threshold,
     )
+
+
+if __name__ == "__main__":
+    main()

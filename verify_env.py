@@ -110,8 +110,43 @@ def _amp():
     return "torch.amp.GradScaler available"
 
 
-def _hybrid_net():
-    """Rebuild the notebook's architecture to prove it constructs and runs."""
+def _shared_model_module():
+    """Exercise src/model.py: the real architecture and normalisation."""
+    import os
+    import sys
+
+    import numpy as np
+    import torch
+
+    sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "src"))
+    from model import GlacialLake_HybridNet, N_CHANNELS, normalize_stack
+
+    # Normalisation must spread every channel across [0, 1] rather than
+    # saturating DEM/slope/aspect, and must not mutate its input.
+    rng = np.random.default_rng(0)
+    stack = np.zeros((N_CHANNELS, 64, 64), dtype=np.float32)
+    stack[0:4] = rng.uniform(0, 1023, (4, 64, 64))
+    stack[4] = rng.uniform(1000, 4000, (64, 64))
+    stack[5] = rng.uniform(0, 90, (64, 64))
+    stack[6] = rng.uniform(0, 360, (64, 64))
+    stack[7] = rng.uniform(-1, 1, (64, 64))
+
+    original = stack.copy()
+    norm = normalize_stack(stack)
+    assert np.array_equal(stack, original), "normalize_stack mutated its input"
+    assert norm.min() >= 0.0 and norm.max() <= 1.0, "normalised values out of range"
+    flat = [i for i in range(N_CHANNELS) if norm[i].std() < 0.05]
+    assert not flat, f"channels {flat} are near-constant after normalisation"
+
+    net = GlacialLake_HybridNet().eval()
+    with torch.no_grad():
+        out = net(torch.randn(1, N_CHANNELS, 256, 256))
+    params = sum(p.numel() for p in net.parameters())
+    return f"forward 1x8x256x256 -> {tuple(out.shape)}, {params / 1e6:.1f}M params"
+
+
+def _hybrid_net_reference():
+    """Standalone rebuild, kept as a cross-check independent of src/model.py."""
     import torch
     import torch.nn as nn
 
@@ -215,7 +250,8 @@ def _hybrid_net():
 
 check("torch tensor op", _tensor_op)
 check("torch.amp", _amp)
-check("GlacialLake_HybridNet", _hybrid_net)
+check("src/model.py (norm + net)", _shared_model_module)
+check("reference architecture", _hybrid_net_reference)
 
 print()
 if failures:

@@ -26,7 +26,11 @@ notebooks/                Preprocessing, training and inference notebooks
   UNET_Testrun.ipynb      Baseline U-Net experiments
   *Data_Preproccessing*   Builds 8-band input stacks, masks and 256×256 chunks
   predict.py              Standalone tiled inference over a large GeoTIFF
-src/                      Data-prep utilities (GEE export, stack inspection, file renaming)
+src/
+  model.py                Shared architecture + normalisation (source of truth)
+  GEE_extraction.py       Earth Engine export helper
+  load_inp_stack*.py      Stack/mask inspection utilities
+  prefix_*.py             Bulk file renaming helpers
 Resources/                Proposal PDFs and the BAH-2025 submission deck
 ```
 
@@ -142,25 +146,61 @@ All values are then clipped to `[0, 1]`.
 1. Export imagery with `src/GEE_extraction.py` (edit the ROI and dates at the top).
 2. Build 8-band stacks, masks and 256×256 chunks using the preprocessing notebooks.
 3. Train with `notebooks/R_Hybrid.ipynb`.
-4. Run inference with `notebooks/predict.py` — **read Known Issues first.**
+4. Run inference:
+
+```bash
+.venv\Scripts\python.exe notebooks/predict.py ^
+    --model notebooks/hybrid_model_best.pth ^
+    --input data/LISS3/processed/LISS3_9_input_stack.tif ^
+    --output notebooks/Output/LISS3_9_predicted_mask.tif ^
+    --chunk-dir notebooks/Output/chunks
+```
+
+`--threshold`, `--patch-size` and `--device` are optional; see `--help`. The
+script tiles the scene, runs the model per tile, and writes a stitched
+single-band `uint8` mask that preserves the source CRS and transform. With
+`--chunk-dir` it also writes a false-colour PNG for each tile containing a
+detection.
+
+`src/model.py` is the single source of truth for both the architecture and the
+input normalisation — import from it rather than copying the definitions.
 
 ---
 
 ## Known issues
 
-These are real defects, listed worst first.
+### Fixed
 
-1. **Train/inference normalisation mismatch (severe).** `predict.py` (lines 18–20) and `R_Hybrid.ipynb` cell 12 apply `(x + 1) / 2` to *all* of channels 4–7. Training normalises channels 4, 5 and 6 as DEM/slope/aspect instead. At inference those three channels saturate to `1.0` after clipping, so the model receives three constant channels. This materially degrades predictions and should be fixed before any evaluation.
-2. **`predict.py` loads the wrong architecture.** It builds `smp.UnetPlusPlus(encoder_name="efficientnet-b4")` rather than `GlacialLake_HybridNet`, so it cannot load hybrid weights.
-3. **Hardcoded absolute paths.** `predict.py` and `R_Hybrid.ipynb` cell 6 point at `C:\Users\Rochan\...`; `src/*.py` use machine-specific paths. Edit these before running.
-4. **Analysis endpoints are mocked.** `/api/process-area` and `/api/compare-images` return `Math.random()` values, not model output. `/api/process-area` is not called by any page.
-5. **Path traversal in `server.js`.** `/downloads/reports/:filename` joins an unsanitised parameter into a filesystem path; a URL-encoded `..%2F` escapes the reports directory. This legacy Express server is superseded by the Next.js app.
-6. **`Up_Attention` size handling.** The attention gate runs before the padding that reconciles a size mismatch, so non-power-of-two inputs raise a shape error.
-7. **GEE route inefficiency.** `/api/gee/compare-lake-area` re-authenticates on every request, and multi-year time series build one large Earth Engine graph evaluated in a single call, which is prone to timing out.
-8. **Junk dependencies.** `package.json` lists `"fs"` and `"path"` as npm packages; both are Node built-ins. `express` and `cors` are pinned to `latest`.
-9. **`Glacier_Website_MAIN/requirement.txt`** lists npm package names despite its Python-style filename.
-10. **`components/MapDisplay.tsx` is dead code** that imports four GeoJSON files which do not exist.
-11. **Build error suppression.** `next.config.mjs` sets `typescript.ignoreBuildErrors` and `eslint.ignoreDuringBuilds` to `true`, which hides genuine errors. TypeScript is currently clean, so these can be turned off.
+- **Train/inference normalisation mismatch (was severe).** Inference applied
+  `(x + 1) / 2` to channels 4–7, but training normalises DEM, slope and aspect by
+  their own maxima. Those three channels saturated to `1.0` after clipping, so the
+  model was fed near-constant data: measured on a representative stack, DEM had
+  standard deviation `0.0000` (all information destroyed), slope `0.0309` versus
+  `0.2853` correct, aspect `0.0132` versus `0.2862`. Normalisation now lives in
+  `normalize_stack()` in `src/model.py` and is shared by training and inference.
+- **`predict.py` built the wrong architecture** (`smp.UnetPlusPlus`), so it could
+  not load hybrid checkpoints. It now uses `GlacialLake_HybridNet` from
+  `src/model.py`.
+- **Hardcoded `C:\Users\Rochan\...` paths in `predict.py`** replaced with CLI
+  arguments.
+- **`Up_Attention` shape error.** The attention gate ran before the padding that
+  reconciles a size mismatch, so non-power-of-two inputs raised an error. Padding
+  now happens first.
+- **Edge-tile handling in `predict.py`.** Tile PNGs were rendered from the padded,
+  partially-normalised tile while the mask was cropped, so overlays misaligned at
+  image edges. Stitching is now verified to cover every pixel exactly.
+
+### Outstanding
+
+1. **Analysis endpoints are mocked.** `/api/process-area` and `/api/compare-images` return `Math.random()` values, not model output. `/api/process-area` is not called by any page.
+2. **Path traversal in `server.js`.** `/downloads/reports/:filename` joins an unsanitised parameter into a filesystem path; a URL-encoded `..%2F` escapes the reports directory. This legacy Express server is superseded by the Next.js app.
+3. **Hardcoded paths in `src/*.py` and the notebooks.** `R_Hybrid.ipynb` cell 6 and the `load_inp_stack*.py` / `prefix_*.py` helpers still point at machine-specific directories. Edit before running.
+4. **The notebooks still define their own copy of the model and normalisation.** They should import from `src/model.py` so the two cannot drift apart again.
+5. **GEE route inefficiency.** `/api/gee/compare-lake-area` re-authenticates on every request, and multi-year time series build one large Earth Engine graph evaluated in a single call, which is prone to timing out.
+6. **Junk dependencies.** `package.json` lists `"fs"` and `"path"` as npm packages; both are Node built-ins. `express` and `cors` are pinned to `latest`.
+7. **`Glacier_Website_MAIN/requirement.txt`** lists npm package names despite its Python-style filename.
+8. **`components/MapDisplay.tsx` is dead code** that imports four GeoJSON files which do not exist.
+9. **Build error suppression.** `next.config.mjs` sets `typescript.ignoreBuildErrors` and `eslint.ignoreDuringBuilds` to `true`, which hides genuine errors. TypeScript is currently clean, so these can be turned off.
 
 ---
 
