@@ -1,0 +1,147 @@
+# Glacial Lake Detection — BAH 2025
+
+**Problem Statement:** AI/ML driven automated feature detection and change analysis of glacial lakes from multi-source satellite imagery.
+
+**Team Technocrats** (SVPCET) — Bharatiya Antariksh Hackathon 2025
+Rochan Awasthi (lead) · Sayali Bambal · Atharva Bhede · Uday Bhoyar
+
+Glacial lakes are expanding as the climate warms, raising the risk of Glacial Lake Outburst Floods (GLOFs) downstream. This project detects and segments glacial lakes from satellite imagery using a deep learning model, tracks how their area changes over time, and presents the results through an interactive web dashboard.
+
+---
+
+
+---
+
+## Repository layout
+
+```
+Glacier_Website_MAIN/     Next.js 15 dashboard (App Router, TypeScript, Tailwind, Leaflet)
+  app/                    Pages: /, /about, /gis-map, /map, /analyze-image, /time-series, /reports
+  app/api/                Route handlers (GEE, risk alerts, report downloads, mocked analysis)
+  components/ui/          shadcn/ui component library
+  public/                 Static assets  ← place sikkim_shape.geojson here
+  server.js               Legacy standalone Express server (superseded by Next.js)
+notebooks/                Preprocessing, training and inference notebooks
+  R_Hybrid.ipynb          Main hybrid GLNet + Attention U-Net model
+  UNET_Testrun.ipynb      Baseline U-Net experiments
+  *Data_Preproccessing*   Builds 8-band input stacks, masks and 256×256 chunks
+  predict.py              Standalone tiled inference over a large GeoTIFF
+src/                      Data-prep utilities (GEE export, stack inspection, file renaming)
+Resources/                Proposal PDFs and the BAH-2025 submission deck
+```
+
+---
+
+## Quick start — web dashboard
+
+Requires **Node.js 18+** (developed against Node 24).
+
+```bash
+cd Glacier_Website_MAIN
+npm ci
+npm run dev          # http://localhost:3000
+```
+
+For a production build:
+
+```bash
+npm run build
+npm start
+```
+
+### Files you must supply
+
+These are excluded by `.gitignore` and are **not** in the repository. The app builds and runs without them, but the corresponding features stay empty and show an in-page notice.
+
+| File | Location | Enables |
+|---|---|---|
+| `sikkim_shape.geojson` | `Glacier_Website_MAIN/public/` | Lake inventory layer, lake selection, time-series analysis on `/gis-map` |
+| `lakes.geojson`, `rivers.geojson`, `glaciers.geojson`, `watersheds.geojson` | — | The `/map` page (also needs the `/api/data/*` routes to be written) |
+| Trained weights (`hybrid_model_best.pth` etc.) | `notebooks/` | Model inference |
+
+`sikkim_shape.geojson` is expected to be a GeoJSON `FeatureCollection` of lake polygons whose properties include `ID_No`, `Name`, `GL_Type`, `Area_ha`, `Elev_m`, `Basin`, `River_Syst`, `State` and `District`.
+
+### Environment variables
+
+Create `Glacier_Website_MAIN/.env.local`:
+
+```
+GEE_CREDENTIALS_JSON={"type":"service_account","project_id":"...","private_key":"...","client_email":"..."}
+```
+
+This is the **full JSON** of a Google Earth Engine service-account key, on one line. It powers `/api/gee/compare-lake-area`, which computes lake area per year from Landsat 8/9 using NDWI, MNDWI, AWEIsh and AWEInsh. Without it that route returns HTTP 500.
+
+---
+
+## ML pipeline
+
+### Dependencies
+
+```bash
+pip install torch torchvision rasterio numpy matplotlib tqdm \
+            segmentation-models-pytorch albumentations opencv-python earthengine-api
+```
+
+### Model input format
+
+The model consumes **8-channel 256×256 GeoTIFF tiles**, normalised as follows (see `GlacialLakeDataset` in `R_Hybrid.ipynb`):
+
+| Channel | Content | Normalisation |
+|---|---|---|
+| 0–3 | LISS-3 optical bands | `÷ 1023` (10-bit) |
+| 4 | DEM elevation | `÷ 4000` |
+| 5 | Slope | `÷ 90` |
+| 6 | Aspect | `÷ 360` |
+| 7 | NDWI | `(x + 1) / 2` |
+
+All values are then clipped to `[0, 1]`.
+
+### Architecture
+
+`GlacialLake_HybridNet` combines:
+
+- a **GLNet-style parallel encoder** — a local branch (full resolution) and a global branch (4× downsample → convolutions → upsample), concatenated to 64 channels;
+- a **U-Net downsampling path** (64 → 128 → 256 → 512 → 1024);
+- an **Attention U-Net decoder** with attention gates on every skip connection and dropout for Monte Carlo uncertainty estimation;
+- **`BoundaryLoss`** — Dice + BCE combined with a morphological-gradient boundary term to sharpen lake outlines.
+
+### Workflow
+
+1. Export imagery with `src/GEE_extraction.py` (edit the ROI and dates at the top).
+2. Build 8-band stacks, masks and 256×256 chunks using the preprocessing notebooks.
+3. Train with `notebooks/R_Hybrid.ipynb`.
+4. Run inference with `notebooks/predict.py` — **read Known Issues first.**
+
+---
+
+## Known issues
+
+These are real defects, listed worst first.
+
+1. **Train/inference normalisation mismatch (severe).** `predict.py` (lines 18–20) and `R_Hybrid.ipynb` cell 12 apply `(x + 1) / 2` to *all* of channels 4–7. Training normalises channels 4, 5 and 6 as DEM/slope/aspect instead. At inference those three channels saturate to `1.0` after clipping, so the model receives three constant channels. This materially degrades predictions and should be fixed before any evaluation.
+2. **`predict.py` loads the wrong architecture.** It builds `smp.UnetPlusPlus(encoder_name="efficientnet-b4")` rather than `GlacialLake_HybridNet`, so it cannot load hybrid weights.
+3. **Hardcoded absolute paths.** `predict.py` and `R_Hybrid.ipynb` cell 6 point at `C:\Users\Rochan\...`; `src/*.py` use machine-specific paths. Edit these before running.
+4. **Analysis endpoints are mocked.** `/api/process-area` and `/api/compare-images` return `Math.random()` values, not model output. `/api/process-area` is not called by any page.
+5. **Path traversal in `server.js`.** `/downloads/reports/:filename` joins an unsanitised parameter into a filesystem path; a URL-encoded `..%2F` escapes the reports directory. This legacy Express server is superseded by the Next.js app.
+6. **`Up_Attention` size handling.** The attention gate runs before the padding that reconciles a size mismatch, so non-power-of-two inputs raise a shape error.
+7. **GEE route inefficiency.** `/api/gee/compare-lake-area` re-authenticates on every request, and multi-year time series build one large Earth Engine graph evaluated in a single call, which is prone to timing out.
+8. **Junk dependencies.** `package.json` lists `"fs"` and `"path"` as npm packages; both are Node built-ins. `express` and `cors` are pinned to `latest`.
+9. **`Glacier_Website_MAIN/requirement.txt`** lists npm package names despite its Python-style filename.
+10. **`components/MapDisplay.tsx` is dead code** that imports four GeoJSON files which do not exist.
+11. **Build error suppression.** `next.config.mjs` sets `typescript.ignoreBuildErrors` and `eslint.ignoreDuringBuilds` to `true`, which hides genuine errors. TypeScript is currently clean, so these can be turned off.
+
+---
+
+## Troubleshooting
+
+**Clone fails partway with `RPC failed; curl 56 Recv failure` or `early EOF`.** Common behind corporate TLS proxies on Windows. Disable Git's schannel revocation check:
+
+```bash
+git clone -c http.schannelCheckRevoke=false \
+          -c http.postBuffer=524288000 \
+          https://github.com/SayaiB24/Glacial_Lake_Detection_BAH-2025.git
+```
+
+**`Module not found: Can't resolve '@/public/sikkim_shape.geojson'`.** Fixed — the file is now loaded at runtime. Pull the latest `main`.
+
+**`ReferenceError: window is not defined` during build.** Leaflet must never render on the server. `/gis-map` loads its map through `next/dynamic` with `ssr: false`; keep any new Leaflet code inside that client module.

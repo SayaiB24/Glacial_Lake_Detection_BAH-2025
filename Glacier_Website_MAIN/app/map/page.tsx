@@ -35,6 +35,7 @@ export default function InteractiveMap() {
     { id: "temperature", name: "Temperature", enabled: false },
   ])
   const [selectedFeature, setSelectedFeature] = useState<any>(null)
+  const [dataError, setDataError] = useState<string | null>(null)
   const layerRefs = useRef<{ [key: string]: any }>({})
 
   useEffect(() => {
@@ -58,11 +59,18 @@ export default function InteractiveMap() {
     }
   }, [])
 
+  // The /api/data/* endpoints are not implemented and the backing GeoJSON files
+  // are not committed, so surface a clear message instead of an empty map.
+  const fetchGeoJson = async (url: string, label: string) => {
+    const response = await fetch(url)
+    if (!response.ok) throw new Error(`${label} (${url}): HTTP ${response.status}`)
+    return response.json()
+  }
+
   const loadLayerData = async () => {
     try {
       // Load lakes data
-      const lakesResponse = await fetch("/api/data/lakes")
-      const lakesData = await lakesResponse.json()
+      const lakesData = await fetchGeoJson("/api/data/lakes", "Glacial Lakes")
 
       const lakesLayer = L.geoJSON(lakesData, {
         style: {
@@ -84,8 +92,7 @@ export default function InteractiveMap() {
       lakesLayer.addTo(mapInstance.current)
 
       // Load rivers data
-      const riversResponse = await fetch("/api/data/rivers")
-      const riversData = await riversResponse.json()
+      const riversData = await fetchGeoJson("/api/data/rivers", "Rivers")
 
       const riversLayer = L.geoJSON(riversData, {
         style: {
@@ -105,8 +112,13 @@ export default function InteractiveMap() {
 
       layerRefs.current["rivers"] = riversLayer
       riversLayer.addTo(mapInstance.current)
+      setDataError(null)
     } catch (error) {
-      console.error("Error loading layer data:", error)
+      const detail = error instanceof Error ? error.message : "Unknown error"
+      console.error("Error loading layer data:", detail)
+      setDataError(
+        `Map layers could not be loaded — ${detail}. The /api/data/* endpoints are not implemented and their GeoJSON files are not in the repository.`,
+      )
     }
   }
 
@@ -265,6 +277,12 @@ export default function InteractiveMap() {
               </div>
             </CardContent>
           </Card>
+        )}
+
+        {dataError && (
+          <div className="absolute top-4 left-1/2 -translate-x-1/2 z-[1000] max-w-2xl rounded-md border border-amber-300 bg-amber-50 px-4 py-3 text-sm text-amber-900 shadow-md">
+            {dataError}
+          </div>
         )}
 
         {/* Map Container */}

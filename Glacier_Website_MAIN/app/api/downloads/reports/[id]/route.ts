@@ -60,9 +60,10 @@ startxref
   return new Uint8Array(Buffer.from(pdfContent))
 }
 
-export async function GET(request: NextRequest, { params }: { params: { id: string } }) {
+export async function GET(request: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   try {
-    const reportId = params.id
+    // Next.js 15 makes route params async; awaiting is required.
+    const { id: reportId } = await params
 
     // Generate sample PDF content
     const pdfBuffer = generateSamplePDF(reportId)
