@@ -7,7 +7,14 @@ import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Upload, X, RefreshCw, ChevronDown, ChevronUp } from 'lucide-react';
 import Image from 'next/image';
+import dynamic from 'next/dynamic';
 import { gsap } from 'gsap';
+
+// Leaflet touches `window` at import time, so it must not be server-rendered.
+const MaskMap = dynamic(() => import('@/components/MaskMap'), {
+    ssr: false,
+    loading: () => <div className="w-full h-[28rem] rounded-md border grid place-items-center text-slate-500">Loading map…</div>,
+});
 
 // --- Snowfall + Particle Background ---
 const AnimatedBackground = () => {
@@ -90,6 +97,26 @@ export default function AnalyzeImagePage() {
     const [analysisResult, setAnalysisResult] = useState<any | null>(null);
     const [isDetailsOpen, setIsDetailsOpen] = useState(false);
     const [lightboxImage, setLightboxImage] = useState<string | null>(null);
+    const [errorMessage, setErrorMessage] = useState<string | null>(null);
+    const [statusMessage, setStatusMessage] = useState<string | null>(null);
+    const [threshold, setThreshold] = useState(0.5);
+    const [mcPasses, setMcPasses] = useState(0);
+    const [serviceStatus, setServiceStatus] = useState<'checking' | 'ready' | 'down'>('checking');
+
+    // Surface up-front whether the Python model service is reachable, rather
+    // than only failing once the user has uploaded a large scene.
+    useEffect(() => {
+        let cancelled = false;
+        fetch('/api/segment')
+            .then((r) => r.json().then((body) => ({ ok: r.ok, body })))
+            .then(({ ok, body }) => {
+                if (!cancelled) setServiceStatus(ok && body?.status === 'ready' ? 'ready' : 'down');
+            })
+            .catch(() => {
+                if (!cancelled) setServiceStatus('down');
+            });
+        return () => { cancelled = true; };
+    }, []);
 
     // GSAP animations
     useEffect(() => {
@@ -122,25 +149,38 @@ export default function AnalyzeImagePage() {
         multiple: false,
     });
 
-    const handleProcessImage = () => {
+    const handleProcessImage = async () => {
         if (!file) {
-            alert('Please upload a GeoTIFF file first.');
+            setErrorMessage('Please upload an 8-band GeoTIFF first.');
             return;
         }
         setIsProcessing(true);
-        setTimeout(() => {
-            setAnalysisResult({
-                processedImageUrl: 'https://placehold.co/600x400/3b82f6/ffffff?text=Processed+Image',
-                lakeCount: 3,
-                totalArea: 2.14,
-                individualLakes: [
-                    { name: 'Lake 1', area: 0.89 },
-                    { name: 'Lake 2', area: 0.75 },
-                    { name: 'Lake 3', area: 0.50 }
-                ]
-            });
+        setErrorMessage(null);
+        setAnalysisResult(null);
+        setStatusMessage('Uploading scene and running the segmentation model…');
+
+        try {
+            const form = new FormData();
+            form.append('file', file);
+            form.append('threshold', String(threshold));
+            form.append('mc_passes', String(mcPasses));
+
+            const response = await fetch('/api/segment', { method: 'POST', body: form });
+            const payload = await response.json();
+
+            if (!response.ok) {
+                const detail = [payload?.details, payload?.hint].filter(Boolean).join(' — ');
+                throw new Error(`${payload?.error ?? payload?.detail ?? `HTTP ${response.status}`}${detail ? ` (${detail})` : ''}`);
+            }
+
+            setAnalysisResult(payload);
+            setStatusMessage(null);
+        } catch (error) {
+            setErrorMessage(error instanceof Error ? error.message : 'Segmentation failed.');
+            setStatusMessage(null);
+        } finally {
             setIsProcessing(false);
-        }, 2000);
+        }
     };
 
     return (
@@ -179,47 +219,113 @@ export default function AnalyzeImagePage() {
                                 {file ? `Selected: ${file.name}` : 'Click to upload or drag & drop a GeoTIFF file'}
                             </p>
                         </div>
-                        <div className="mt-8 text-center">
+                        <p className="mt-3 text-xs text-center text-slate-500">
+                            Expects an 8-band stack: 4 LISS-3 optical bands, DEM, slope, aspect, NDWI.
+                        </p>
+
+                        <div className="mt-6 grid grid-cols-2 gap-4 text-sm">
+                            <label className="block">
+                                <span className="text-slate-600">Threshold: <span className="font-mono">{threshold.toFixed(2)}</span></span>
+                                <input type="range" min={0.05} max={0.95} step={0.05} value={threshold}
+                                    onChange={(e) => setThreshold(parseFloat(e.target.value))}
+                                    className="w-full mt-1" />
+                            </label>
+                            <label className="block">
+                                <span className="text-slate-600">Uncertainty passes: <span className="font-mono">{mcPasses === 0 ? 'off' : mcPasses}</span></span>
+                                <input type="range" min={0} max={30} step={2} value={mcPasses}
+                                    onChange={(e) => setMcPasses(parseInt(e.target.value, 10))}
+                                    className="w-full mt-1" />
+                            </label>
+                        </div>
+
+                        {serviceStatus === 'down' && (
+                            <div className="mt-4 rounded-md border border-amber-300 bg-amber-50 px-4 py-3 text-sm text-amber-900">
+                                <strong>Model service is not running.</strong> Start it with:
+                                <code className="block mt-1 font-mono text-xs bg-amber-100 px-2 py-1 rounded">
+                                    .venv\Scripts\python.exe -m uvicorn serve:app --app-dir src --port 8000
+                                </code>
+                            </div>
+                        )}
+
+                        <div className="mt-6 text-center">
                             <Button onClick={handleProcessImage} disabled={!file || isProcessing} className="bg-blue-600 text-white hover:bg-blue-700 font-bold py-3 px-8 rounded-md text-lg h-auto transition-transform hover:scale-105 disabled:bg-gray-400 disabled:scale-100">
-                                {isProcessing ? 'Processing...' : 'Process Image'}
+                                {isProcessing ? 'Processing…' : 'Detect Glacial Lakes'}
                             </Button>
                         </div>
+
+                        {statusMessage && <p className="mt-4 text-center text-sm text-slate-600">{statusMessage}</p>}
+                        {errorMessage && (
+                            <div className="mt-4 rounded-md border border-red-300 bg-red-50 px-4 py-3 text-sm text-red-900">
+                                {errorMessage}
+                            </div>
+                        )}
                     </div>
 
                     {analysisResult && (
                         <div id="results-section" className="space-y-8">
                             <h3 className="text-3xl font-bold text-blue-900 mb-6 text-center">Analysis Results</h3>
 
-                            <div className="grid grid-cols-1 md:grid-cols-2 gap-8 mb-8">
-                                <Card className="bg-white/60 backdrop-blur-md border border-blue-200/50">
-                                    <CardHeader><CardTitle className="text-center text-blue-800">Original Image</CardTitle></CardHeader>
-                                    <CardContent>
-                                        <Image onClick={() => setLightboxImage(preview!)} width={600} height={400} src={preview || "https://placehold.co/600x400/e0e7ff/374151?text=Original+Image"} alt="Original uploaded" className="rounded-md w-full cursor-zoom-in transition-transform hover:scale-105" />
-                                    </CardContent>
-                                </Card>
-                                <Card className="bg-white/60 backdrop-blur-md border border-blue-200/50">
-                                    <CardHeader><CardTitle className="text-center text-blue-800">Processed Image (Masked)</CardTitle></CardHeader>
-                                    <CardContent>
-                                        <Image onClick={() => setLightboxImage(analysisResult.processedImageUrl)} width={600} height={400} src={analysisResult.processedImageUrl} alt="Processed lakes" className="rounded-md w-full cursor-zoom-in transition-transform hover:scale-105" />
-                                    </CardContent>
-                                </Card>
+                            <Card className="bg-white/60 backdrop-blur-md border border-blue-200/50">
+                                <CardHeader><CardTitle className="text-center text-blue-800">Detected Lake Masks</CardTitle></CardHeader>
+                                <CardContent>
+                                    <MaskMap
+                                        polygons={analysisResult.polygons}
+                                        bounds={analysisResult.stats?.bounds}
+                                        className="w-full h-[28rem] rounded-md border"
+                                    />
+                                    <p className="mt-2 text-xs text-slate-500 text-center">
+                                        Polygons are model output, georeferenced to the uploaded scene. Click one for its area.
+                                    </p>
+                                </CardContent>
+                            </Card>
+
+                            <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+                                {[
+                                    { label: 'Lakes detected', value: analysisResult.stats.lakeCount },
+                                    { label: 'Total area', value: `${analysisResult.stats.totalAreaHa.toFixed(2)} ha` },
+                                    { label: 'Scene coverage', value: `${analysisResult.stats.coveragePercent.toFixed(2)}%` },
+                                    { label: 'Processing time', value: `${analysisResult.stats.processingSeconds.toFixed(1)} s` },
+                                ].map((s) => (
+                                    <Card key={s.label} className="bg-white/60 backdrop-blur-md border border-blue-200/50">
+                                        <CardContent className="p-4 text-center">
+                                            <div className="text-2xl font-bold text-blue-700">{s.value}</div>
+                                            <div className="text-xs text-slate-500 mt-1">{s.label}</div>
+                                        </CardContent>
+                                    </Card>
+                                ))}
                             </div>
 
-                            <Card className="bg-white/60 backdrop-blur-md border border-blue-200/50 p-6 max-w-md mx-auto">
-                                <CardHeader><CardTitle className="text-center text-blue-800">Key Statistics</CardTitle></CardHeader>
-                                <CardContent className="space-y-3 text-lg text-center text-slate-700">
-                                    <p>Detected Lakes: <span className="font-bold text-blue-600">{analysisResult.lakeCount}</span></p>
-                                    <p>Total Lake Area: <span className="font-bold text-blue-600">{analysisResult.totalArea.toFixed(2)} km²</span></p>
-                                    <div className="pt-4 border-t border-blue-200">
+                            <Card className="bg-white/60 backdrop-blur-md border border-blue-200/50 p-6 max-w-2xl mx-auto">
+                                <CardHeader><CardTitle className="text-center text-blue-800">Run Details</CardTitle></CardHeader>
+                                <CardContent className="text-sm text-slate-700">
+                                    <div className="grid grid-cols-2 gap-x-6 gap-y-1 font-mono text-xs">
+                                        <div className="flex justify-between"><span>Raster</span><span>{analysisResult.stats.rasterSize?.join(' × ')}</span></div>
+                                        <div className="flex justify-between"><span>CRS</span><span>{analysisResult.stats.crs ?? 'none'}</span></div>
+                                        <div className="flex justify-between"><span>Threshold</span><span>{analysisResult.stats.threshold}</span></div>
+                                        <div className="flex justify-between"><span>Device</span><span>{analysisResult.stats.device}</span></div>
+                                        <div className="flex justify-between"><span>Lake pixels</span><span>{analysisResult.stats.lakePixels?.toLocaleString()}</span></div>
+                                        <div className="flex justify-between"><span>MC passes</span><span>{analysisResult.stats.mcPasses || 'off'}</span></div>
+                                        {analysisResult.stats.meanUncertaintyOverLakes != null && (
+                                            <div className="flex justify-between col-span-2">
+                                                <span>Mean uncertainty over detected lakes</span>
+                                                <span>{analysisResult.stats.meanUncertaintyOverLakes}</span>
+                                            </div>
+                                        )}
+                                    </div>
+
+                                    <div className="pt-4 mt-4 border-t border-blue-200">
                                         <button onClick={() => setIsDetailsOpen(!isDetailsOpen)} className="text-sm text-blue-600 hover:underline w-full flex justify-center items-center">
-                                            View Individual Lake Areas {isDetailsOpen ? <ChevronUp className="ml-2" /> : <ChevronDown className="ml-2" />}
+                                            Individual lake areas {isDetailsOpen ? <ChevronUp className="ml-2 w-4 h-4" /> : <ChevronDown className="ml-2 w-4 h-4" />}
                                         </button>
                                         {isDetailsOpen && (
-                                            <div className="text-left text-base mt-2 space-y-1">
-                                                {analysisResult.individualLakes.map((lake: any) => (
-                                                    <p key={lake.name} className="flex justify-between py-1 px-2 rounded-md hover:bg-blue-100/50">
-                                                        <span>{lake.name}:</span>
-                                                        <span className="font-semibold">{lake.area.toFixed(2)} km²</span>
+                                            <div className="text-left mt-2 space-y-1 max-h-64 overflow-y-auto">
+                                                {analysisResult.polygons.features.length === 0 && (
+                                                    <p className="text-slate-500 text-center py-2">No lakes detected above the threshold.</p>
+                                                )}
+                                                {analysisResult.polygons.features.map((f: any) => (
+                                                    <p key={f.properties.lake_id} className="flex justify-between py-1 px-2 rounded-md hover:bg-blue-100/50">
+                                                        <span>{f.properties.lake_id}</span>
+                                                        <span className="font-semibold">{f.properties.area_ha.toFixed(3)} ha</span>
                                                     </p>
                                                 ))}
                                             </div>

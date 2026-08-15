@@ -36,9 +36,18 @@ Resources/                Proposal PDFs and the BAH-2025 submission deck
 
 ---
 
-## Quick start — web dashboard
+## Quick start
 
-Requires **Node.js 18+** (developed against Node 24).
+The system runs as two processes: the Next.js dashboard, and a Python service
+that holds the trained model in memory and performs segmentation.
+
+**Terminal 1 — model service** (needed only for GeoTIFF segmentation):
+
+```bash
+.venv\Scripts\python.exe -m uvicorn serve:app --app-dir src --port 8000
+```
+
+**Terminal 2 — dashboard** (Node.js 18+, developed against Node 24):
 
 ```bash
 cd Glacier_Website_MAIN
@@ -46,12 +55,29 @@ npm ci
 npm run dev          # http://localhost:3000
 ```
 
-For a production build:
+For a production build, use `npm run build && npm start` instead.
 
-```bash
-npm run build
-npm start
-```
+The dashboard runs without the model service — the map, lake inventory, trend
+analysis and risk ranking all work on their own. Only `/analyze-image` needs it,
+and that page reports clearly when the service is not reachable.
+
+### Getting lake masks
+
+1. Start both processes above.
+2. Open <http://localhost:3000/analyze-image>.
+3. Upload an 8-band GeoTIFF (4 LISS-3 optical bands, DEM, slope, aspect, NDWI).
+4. Optionally adjust the detection threshold, and set uncertainty passes above 0
+   to enable Monte Carlo dropout.
+5. Detected lakes are drawn as polygons on a satellite basemap, with per-lake
+   areas, total area, scene coverage and processing time.
+
+The service tiles the scene, runs the hybrid model over each tile, stitches the
+mask, vectorises it and reprojects the polygons to EPSG:4326, so results overlay
+correctly on the map regardless of the source projection.
+
+Configuration via environment variables: `GLOF_MODEL_PATH` (checkpoint),
+`GLOF_DEVICE` (`cpu` or `cuda`), `GLOF_MAX_UPLOAD_MB`, `GLOF_MAX_PIXELS`, and
+`GLOF_SERVICE_URL` on the Next.js side if the service is not on port 8000.
 
 ### Files you must supply
 
@@ -263,7 +289,8 @@ around 100 people downstream. Current distribution: 65 High, 178 Moderate,
 
 ### Outstanding
 
-1. **Two analysis endpoints are still mocked.** `/api/process-area` and `/api/compare-images` return `Math.random()` values rather than model output, and `/api/process-area` is not called by any page. (`/api/risk-alerts` no longer is — it now ranks the real inventory.)
+1. **The trained model has never been run on real imagery.** No 8-band LISS-3 stack is available in this repository, so the segmentation path is verified only on synthetic scenes. In particular the *band order* in `normalize_stack()` is inferred from `GlacialLakeDataset`, not confirmed against a real file, and detection accuracy is unmeasured. One real input stack would resolve both.
+2. **Two analysis endpoints are still mocked.** `/api/process-area` and `/api/compare-images` return `Math.random()` values rather than model output, and neither is reachable from the UI. `/api/segment` supersedes them and does real inference. (`/api/risk-alerts` is also real now — it ranks the actual inventory.)
 2. **Path traversal in `server.js`.** `/downloads/reports/:filename` joins an unsanitised parameter into a filesystem path; a URL-encoded `..%2F` escapes the reports directory. This legacy Express server is superseded by the Next.js app.
 3. **Hardcoded paths in `src/*.py` and the notebooks.** `R_Hybrid.ipynb` cell 6 and the `load_inp_stack*.py` / `prefix_*.py` helpers still point at machine-specific directories. Edit before running.
 4. **The notebooks still define their own copy of the model and normalisation.** They should import from `src/model.py` so the two cannot drift apart again.
