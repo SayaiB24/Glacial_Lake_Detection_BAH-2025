@@ -6,6 +6,13 @@ data
 # Python
 __pycache__/
 *.py[cod]
+
+# Model checkpoints. These routinely exceed GitHub's 100 MB hard limit
+# (hybrid_model_v3_best.pth is 128 MB), so match by extension rather than
+# listing individual filenames.
+*.pth
+*.pt
+*.ckpt
 glacial-lake-detection-BAH-2025-venv/ 
 Resources/
 notebooks/.ipynb_checkpoints/
