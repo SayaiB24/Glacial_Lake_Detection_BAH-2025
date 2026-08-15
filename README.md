@@ -199,6 +199,36 @@ The implementation is validated against an independent Python reference across
 10 series — monotonic, tied, uneven spacing, gaps and minimum length — agreeing
 to within 2e-7 on p-values.
 
+### GLOF susceptibility screening
+
+`Glacier_Website_MAIN/lib/glofRisk.ts` ranks lakes in the NRSC inventory by
+outburst susceptibility. `GET /api/risk-alerts` serves the ranking, with
+optional `?limit=` and `?level=` parameters.
+
+The index combines four factors, weighted by how strongly each is associated
+with outburst floods and by how well this inventory measures it:
+
+| Factor | Weight | Rationale |
+|---|---:|---|
+| Dam type (`GL_Type`) | 35 | Moraine dams are unconsolidated debris and are the dam type that fails; bedrock-confined erosion lakes rarely burst |
+| Lake area | 30 | Proxy for stored volume, log-scaled — the distribution is skewed from under 1 ha median to 174 ha |
+| Growth trend | 25 | From Mann–Kendall; counted only when a significant *increasing* trend is present |
+| Elevation | 10 | Proxy for proximity to actively retreating ice, a common trigger |
+
+Lakes without a time series are scored over the remaining factors and
+renormalised, rather than penalised for missing data.
+
+**This is a screening index for prioritising monitoring, not a validated hazard
+assessment, and must not be used alone to drive warnings or evacuation.** It
+cannot see moraine geometry, dam freeboard, buried ice, distance to the parent
+glacier, downstream channel form, or exposed population — several of which
+dominate real breach probability.
+
+As a sanity check, the ranking places **South Lhonak Lake 2nd of 718**. Its
+moraine dam breached in October 2023, destroying the Chungthang dam and killing
+around 100 people downstream. Current distribution: 65 High, 178 Moderate,
+475 Low.
+
 ---
 
 ## Known issues
@@ -233,7 +263,7 @@ to within 2e-7 on p-values.
 
 ### Outstanding
 
-1. **Analysis endpoints are mocked.** `/api/process-area` and `/api/compare-images` return `Math.random()` values, not model output. `/api/process-area` is not called by any page.
+1. **Two analysis endpoints are still mocked.** `/api/process-area` and `/api/compare-images` return `Math.random()` values rather than model output, and `/api/process-area` is not called by any page. (`/api/risk-alerts` no longer is — it now ranks the real inventory.)
 2. **Path traversal in `server.js`.** `/downloads/reports/:filename` joins an unsanitised parameter into a filesystem path; a URL-encoded `..%2F` escapes the reports directory. This legacy Express server is superseded by the Next.js app.
 3. **Hardcoded paths in `src/*.py` and the notebooks.** `R_Hybrid.ipynb` cell 6 and the `load_inp_stack*.py` / `prefix_*.py` helpers still point at machine-specific directories. Edit before running.
 4. **The notebooks still define their own copy of the model and normalisation.** They should import from `src/model.py` so the two cannot drift apart again.

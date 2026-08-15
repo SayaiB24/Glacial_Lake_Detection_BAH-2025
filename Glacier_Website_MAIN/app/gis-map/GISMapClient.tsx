@@ -61,7 +61,17 @@ interface GeoJsonProperties {
 interface GeoJsonFeature { type: "Feature"; properties: GeoJsonProperties; geometry: GeoJsonGeometry; }
 interface GeoJsonFeatureCollection { type: "FeatureCollection"; features: GeoJsonFeature[]; }
 interface LayerData { id: string; name: string; enabled: boolean; icon: any; }
-interface RiskAlert { id: string; name: string; riskLevel: "High" | "Moderate" | "Low"; lastUpdated: string; }
+interface RiskAlert {
+  id: string;
+  name: string;
+  riskLevel: "High" | "Moderate" | "Low";
+  lastUpdated: string;
+  /** Screening index 0-100, present once /api/risk-alerts computes it. */
+  score?: number;
+  areaHa?: number;
+  elevationM?: number;
+  lakeType?: string;
+}
 
 // Updated interfaces for the new API response
 interface AnalysisMetadata {
@@ -826,17 +836,32 @@ function GISMap() {
                 </Link>
               </div>
               <div className="space-y-2 text-sm">
-                <div className="flex font-semibold text-gray-600 px-2">
-                  <div className="flex-1">Lake ID/Name</div>
-                  <div className="w-28 text-right">Last Updated</div>
+                <div className="flex font-semibold text-gray-600 px-2 text-xs">
+                  <div className="flex-1">Lake</div>
+                  <div className="w-16 text-right">Area</div>
+                  <div className="w-14 text-right">Index</div>
                 </div>
                 {riskAlerts.map((alert) => (
-                  <div key={alert.id} className="flex items-center bg-gray-50 p-2 rounded-md hover:bg-gray-100 transition-colors">
-                    <AlertTriangle className={`w-4 h-4 mr-2 ${riskColor(alert.riskLevel)}`} />
-                    <div className="flex-1 truncate">{alert.id}</div>
-                    <div className="w-28 text-right text-gray-500">{alert.lastUpdated}</div>
+                  <div
+                    key={alert.id}
+                    className="flex items-center bg-gray-50 p-2 rounded-md hover:bg-gray-100 transition-colors"
+                    title={`${alert.lakeType ?? ""}${alert.elevationM ? ` — ${alert.elevationM} m` : ""} — surveyed ${alert.lastUpdated}`}
+                  >
+                    <AlertTriangle className={`w-4 h-4 mr-2 shrink-0 ${riskColor(alert.riskLevel)}`} />
+                    <div className="flex-1 truncate text-xs" title={alert.name}>{alert.name}</div>
+                    <div className="w-16 text-right text-gray-500 text-xs">
+                      {alert.areaHa !== undefined ? `${alert.areaHa.toFixed(1)} ha` : "—"}
+                    </div>
+                    <div className={`w-14 text-right font-semibold text-xs ${riskColor(alert.riskLevel)}`}>
+                      {alert.score !== undefined ? alert.score.toFixed(0) : alert.riskLevel}
+                    </div>
                   </div>
                 ))}
+                <p className="text-[10px] leading-snug text-gray-500 px-2 pt-1">
+                  Screening index for prioritising monitoring, ranked from the NRSC
+                  inventory by dam type, area and elevation. Not a validated hazard
+                  assessment.
+                </p>
               </div>
             </div>
             <div className="mt-auto pt-4 border-t space-y-2">
