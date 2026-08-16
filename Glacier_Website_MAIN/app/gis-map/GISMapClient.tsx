@@ -107,18 +107,31 @@ interface TimeSeriesResult {
   analysisEndYear: number;
 }
 
+// Each base layer is one or more tile URLs drawn in order, so "hybrid" can put
+// place labels over imagery.
+//
+// OpenTopoMap was previously used for terrain but returns HTTP 403 to
+// non-browser referrers, which left the terrain option showing a blank map.
+// Esri's topographic service is used instead — the same provider as the
+// imagery layer, so it is subject to one set of availability rules.
 const baseLayerSources = {
   satellite: {
-    url: "https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}",
+    urls: ["https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}"],
     attribution: "Tiles &copy; Esri",
+    maxZoom: 19,
   },
   terrain: {
-    url: "https://{s}.tile.opentopomap.org/{z}/{x}/{y}.png",
-    attribution: "Map data: &copy; OpenStreetMap contributors, SRTM | Map style: &copy; OpenTopoMap",
+    urls: ["https://server.arcgisonline.com/ArcGIS/rest/services/World_Topo_Map/MapServer/tile/{z}/{y}/{x}"],
+    attribution: "Tiles &copy; Esri — topographic",
+    maxZoom: 19,
   },
   hybrid: {
-    url: "https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png",
-    attribution: "© OpenStreetMap contributors",
+    urls: [
+      "https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}",
+      "https://server.arcgisonline.com/ArcGIS/rest/services/Reference/World_Boundaries_and_Places/MapServer/tile/{z}/{y}/{x}",
+    ],
+    attribution: "Tiles &copy; Esri — imagery with place labels",
+    maxZoom: 19,
   },
 };
 
@@ -143,6 +156,8 @@ function GISMap() {
   // even when sikkim_shape.geojson has not been supplied.
   const [sikkimShape, setSikkimShape] = useState<GeoJsonFeatureCollection>({ type: "FeatureCollection", features: [] });
   const [lakeDataError, setLakeDataError] = useState<string | null>(null);
+  const [measureMode, setMeasureMode] = useState<"distance" | "area" | null>(null);
+  const [measureResult, setMeasureResult] = useState<string | null>(null);
   const [lakeInfo, setLakeInfo] = useState<GeoJsonProperties | null>(null);
   const [lakeInfoPosition, setLakeInfoPosition] = useState({ x: 0, y: 0 });
   const [isDragging, setIsDragging] = useState(false);
@@ -165,6 +180,11 @@ function GISMap() {
 
   const analysisLayerRef = useRef<L.Layer | null>(null);
   const drawControlRef = useRef<L.Control.Draw | null>(null);
+  const activeDrawHandlerRef = useRef<{ disable: () => void } | null>(null);
+  const measureLayerRef = useRef<L.Layer | null>(null);
+  // The draw:created handler is registered once on mount, so it would close over
+  // a stale measureMode. Mirror it in a ref that the handler can read.
+  const measureModeRef = useRef<"distance" | "area" | null>(null);
   const lakeMaskLayerRef = useRef<L.Layer | null>(null);
   const highlightLayerRef = useRef<L.GeoJSON | null>(null);
 
@@ -275,9 +295,48 @@ function GISMap() {
 
     mapInstance.current.on(L.Draw.Event.CREATED, (event: any) => {
       const layer = event.layer;
+      activeDrawHandlerRef.current = null;
+
+      // A polyline can only be a measurement; a polygon or rectangle is an AOI
+      // unless a measurement was explicitly started.
+      const isPolyline = event.layerType === "polyline";
+      const measuring = isPolyline || measureModeRef.current !== null;
+
+      if (measuring) {
+        if (measureLayerRef.current && mapInstance.current?.hasLayer(measureLayerRef.current)) {
+          mapInstance.current.removeLayer(measureLayerRef.current);
+        }
+        layer.addTo(mapInstance.current!);
+        measureLayerRef.current = layer;
+
+        if (isPolyline) {
+          const points: L.LatLng[] = layer.getLatLngs();
+          let metres = 0;
+          for (let i = 1; i < points.length; i++) metres += points[i - 1].distanceTo(points[i]);
+          setMeasureResult(
+            metres >= 1000
+              ? `${(metres / 1000).toFixed(3)} km along ${points.length} points`
+              : `${metres.toFixed(1)} m along ${points.length} points`,
+          );
+        } else {
+          const ring: L.LatLng[] = layer.getLatLngs()[0];
+          const m2 = (L as any).GeometryUtil?.geodesicArea
+            ? (L as any).GeometryUtil.geodesicArea(ring)
+            : 0;
+          setMeasureResult(
+            m2 >= 1e6
+              ? `${(m2 / 1e6).toFixed(4)} km² (${(m2 / 1e4).toFixed(2)} ha)`
+              : `${(m2 / 1e4).toFixed(4)} ha`,
+          );
+        }
+        setMeasureMode(null);
+        return;
+      }
+
       drawnItemsRef.current?.addLayer(layer);
       if (layer instanceof L.Polygon || layer instanceof L.Rectangle) {
         setDrawnArea(layer.getBounds());
+        setIsDrawing(true);
       }
     });
 
@@ -300,6 +359,10 @@ function GISMap() {
     };
   }, []);
   
+  useEffect(() => {
+    measureModeRef.current = measureMode;
+  }, [measureMode]);
+
   // Load the glacial lake inventory at runtime. The file is not committed to the
   // repo, so a missing file degrades to an empty layer instead of failing the build.
   useEffect(() => {
@@ -461,12 +524,39 @@ function GISMap() {
   const handleEnableDrawing = () => {
     handleExitAoiMode();
     setIsDrawing(true);
+    if (!mapInstance.current) return;
+    // Previously this only flipped a flag, leaving the user to find the small
+    // rectangle icon on the draw toolbar, so the button appeared to do nothing.
+    // Activate the rectangle handler directly.
+    activeDrawHandlerRef.current?.disable();
+    const handler = new (L as any).Draw.Rectangle(mapInstance.current, {
+      shapeOptions: { color: "#2563eb", weight: 2, fillOpacity: 0.15 },
+    });
+    handler.enable();
+    activeDrawHandlerRef.current = handler;
   };
 
+  /** True when any part of the lake intersects the selected bounds. */
   const isLakeInArea = (feature: GeoJsonFeature, bounds: L.LatLngBounds): boolean => {
-    if (feature.geometry.type === "Point") {
-      const [longitude, latitude] = feature.geometry.coordinates;
+    const geom = feature.geometry;
+    if (!geom) return false;
+
+    if (geom.type === "Point") {
+      const [longitude, latitude] = geom.coordinates as number[];
       return bounds.contains([latitude, longitude]);
+    }
+
+    // Every lake in the NRSC inventory is a Polygon or MultiPolygon, so the
+    // previous Point-only test meant area selection always returned nothing.
+    const rings: number[][][] =
+      geom.type === "Polygon"
+        ? (geom.coordinates as number[][][])
+        : (geom.coordinates as number[][][][]).flat();
+
+    for (const ring of rings) {
+      for (const [lng, lat] of ring) {
+        if (bounds.contains([lat, lng])) return true;
+      }
     }
     return false;
   };
@@ -518,22 +608,50 @@ function GISMap() {
       mapInstance.current.removeLayer(baseLayerRef.current);
     }
     const source = baseLayerSources[layerId as keyof typeof baseLayerSources];
-    const newBaseLayer = L.tileLayer(source.url, { attribution: source.attribution });
-    newBaseLayer.addTo(mapInstance.current);
-    baseLayerRef.current = newBaseLayer;
-    newBaseLayer.bringToBack();
+    // A base layer may be several stacked tile layers, so group them and treat
+    // the group as a single removable layer.
+    const group = L.layerGroup(
+      source.urls.map((url) =>
+        L.tileLayer(url, { attribution: source.attribution, maxZoom: source.maxZoom }),
+      ),
+    );
+    group.addTo(mapInstance.current);
+    baseLayerRef.current = group;
+    group.eachLayer((layer) => (layer as L.TileLayer).bringToBack());
   };
 
+  /**
+   * Start an interactive measurement.
+   *
+   * The previous implementation added a brand new L.Control.Draw to the map on
+   * every click — stacking duplicate toolbars — without ever enabling a draw
+   * handler, so no measurement could be taken and no result was displayed.
+   */
   const startMeasuring = (tool: "distance" | "area") => {
     if (!mapInstance.current) return;
     handleExitAoiMode();
-    const drawOptions = {
-      polyline: tool === "distance" ? {} : undefined,
-      polygon: tool === "area" ? {} : undefined,
-      rectangle: undefined, circle: undefined, marker: undefined, circlemarker: undefined,
-    };
-    const drawControl = new L.Control.Draw({ draw: drawOptions });
-    mapInstance.current.addControl(drawControl);
+    setMeasureResult(null);
+    setMeasureMode(tool);
+
+    activeDrawHandlerRef.current?.disable();
+    const style = { color: "#f59e0b", weight: 3 };
+    const handler =
+      tool === "distance"
+        ? new (L as any).Draw.Polyline(mapInstance.current, { shapeOptions: style })
+        : new (L as any).Draw.Polygon(mapInstance.current, { shapeOptions: { ...style, fillOpacity: 0.2 } });
+    handler.enable();
+    activeDrawHandlerRef.current = handler;
+  };
+
+  const clearMeasurement = () => {
+    activeDrawHandlerRef.current?.disable();
+    activeDrawHandlerRef.current = null;
+    if (measureLayerRef.current && mapInstance.current?.hasLayer(measureLayerRef.current)) {
+      mapInstance.current.removeLayer(measureLayerRef.current);
+    }
+    measureLayerRef.current = null;
+    setMeasureResult(null);
+    setMeasureMode(null);
   };
 
   const toggleFullscreen = () => {
@@ -723,9 +841,27 @@ function GISMap() {
             <div className="pt-4 border-t">
               <h4 className="text-sm font-medium text-gray-700 mb-3">Analysis Tools</h4>
               <div className="space-y-2">
-                <Button onClick={() => startMeasuring("distance")} variant="outline" size="sm" className="w-full justify-start bg-transparent">
+                <Button onClick={() => startMeasuring("distance")} variant="outline" size="sm"
+                  className={`w-full justify-start ${measureMode === "distance" ? "bg-amber-100 border-amber-400" : "bg-transparent"}`}>
                   <Ruler className="w-4 h-4 mr-2" /> Measure Distance
                 </Button>
+                <Button onClick={() => startMeasuring("area")} variant="outline" size="sm"
+                  className={`w-full justify-start ${measureMode === "area" ? "bg-amber-100 border-amber-400" : "bg-transparent"}`}>
+                  <Ruler className="w-4 h-4 mr-2" /> Measure Area
+                </Button>
+                {measureMode && (
+                  <p className="text-xs text-amber-700 px-1">
+                    Click on the map to add points, then click the last point again to finish.
+                  </p>
+                )}
+                {measureResult && (
+                  <div className="rounded-md border border-amber-300 bg-amber-50 px-3 py-2 text-xs">
+                    <div className="font-semibold text-amber-900">{measureResult}</div>
+                    <button onClick={clearMeasurement} className="mt-1 text-amber-700 hover:underline">
+                      Clear measurement
+                    </button>
+                  </div>
+                )}
                 <Button onClick={() => setShowLakeMask(!showLakeMask)} variant="outline" size="sm" className="w-full justify-start bg-transparent">
                   <MapIcon className="w-4 h-4 mr-2" /> Lake Mask
                 </Button>
