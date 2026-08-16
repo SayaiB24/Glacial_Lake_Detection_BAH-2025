@@ -158,6 +158,50 @@ The model consumes **8-channel 256×256 GeoTIFF tiles**, normalised as follows (
 
 All values are then clipped to `[0, 1]`.
 
+`normalize_stack()` validates these ranges and warns (or raises, with
+`strict=True`) when a stack does not match, so a mis-ordered input fails loudly
+instead of being silently turned into noise.
+
+### Input stack layouts — important
+
+**Two incompatible stack layouts exist, and only one works with the trained
+model.**
+
+The model requires the layout above. But `LISS3_1_input_stack.tif`, published at
+<https://github.com/SayaiB24/tif>, is laid out differently:
+
+| Band | Contents | Verified by |
+|---:|---|---|
+| 0 | MNDWI `(Green − SWIR)/(Green + SWIR)` | exact algebraic identity |
+| 1 | `(Red − SWIR)/(Red + SWIR)` | exact algebraic identity |
+| 2 | NDVI `(NIR − Red)/(NIR + Red)` | exact algebraic identity |
+| 3 | NDWI `(Green − NIR)/(Green + NIR)` | exact algebraic identity |
+| 4 | Green (B2), 10-bit DN | integer, 0–478 |
+| 5 | Red (B3), 10-bit DN | integer, 0–443 |
+| 6 | NIR (B4), 10-bit DN | integer, 0–567 |
+| 7 | SWIR (B5), 10-bit DN | integer, 0–544 |
+
+That is **four spectral indices followed by four optical bands, with no DEM,
+slope or aspect at all**. Each index reproduces a normalised difference of the
+integer bands to within floating-point exactness, so the mapping is certain
+rather than inferred.
+
+Feeding this file to the model gives it indices where it was trained to see
+terrain. Tested across the water-bearing tiles of that scene, the best of three
+plausible re-orderings produced only a weak correlation between predicted
+probability and NDWI (r ≈ 0.13), which is consistent with the optical and NDWI
+channels landing correctly while the three terrain channels carry unrelated
+data.
+
+That scene is also in **Himachal/Ladakh (74.5–76.5 °E, 32.5–34.1 °N)**, roughly
+1100 km from the Sikkim inventory, so it cannot be scored against those 718
+polygons either.
+
+**What is needed to measure accuracy:** a stack produced by the same
+preprocessing that generated the training chunks in
+`data/LISS3/segments/input_stack/` — one that includes DEM, slope and aspect —
+and ideally covering Sikkim so the NRSC inventory can serve as ground truth.
+
 ### Architecture
 
 `GlacialLake_HybridNet` combines:
@@ -289,7 +333,12 @@ around 100 people downstream. Current distribution: 65 High, 178 Moderate,
 
 ### Outstanding
 
-1. **The trained model has never been run on real imagery.** No 8-band LISS-3 stack is available in this repository, so the segmentation path is verified only on synthetic scenes. In particular the *band order* in `normalize_stack()` is inferred from `GlacialLakeDataset`, not confirmed against a real file, and detection accuracy is unmeasured. One real input stack would resolve both.
+1. **No input stack matching the model's expected layout has been found.** The
+   model expects 4 optical bands, DEM, slope, aspect and NDWI. The only real
+   stack available so far, `LISS3_1_input_stack.tif`, has a different layout
+   entirely — see "Input stack layouts" below. Detection accuracy therefore
+   remains unmeasured, and the segmentation path is verified only on synthetic
+   scenes.
 2. **Two analysis endpoints are still mocked.** `/api/process-area` and `/api/compare-images` return `Math.random()` values rather than model output, and neither is reachable from the UI. `/api/segment` supersedes them and does real inference. (`/api/risk-alerts` is also real now — it ranks the actual inventory.)
 2. **Path traversal in `server.js`.** `/downloads/reports/:filename` joins an unsanitised parameter into a filesystem path; a URL-encoded `..%2F` escapes the reports directory. This legacy Express server is superseded by the Next.js app.
 3. **Hardcoded paths in `src/*.py` and the notebooks.** `R_Hybrid.ipynb` cell 6 and the `load_inp_stack*.py` / `prefix_*.py` helpers still point at machine-specific directories. Edit before running.

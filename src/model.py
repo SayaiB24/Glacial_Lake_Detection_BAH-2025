@@ -11,6 +11,8 @@ checkpoints trained from the notebook load with `load_state_dict` unchanged.
 
 from __future__ import annotations
 
+import warnings
+
 import numpy as np
 import torch
 import torch.nn as nn
@@ -41,26 +43,79 @@ SLOPE_MAX = 90.0
 ASPECT_MAX = 360.0
 
 
-def normalize_stack(stack: np.ndarray) -> np.ndarray:
+def check_band_layout(stack: np.ndarray) -> list[str]:
+    """Report bands whose values are inconsistent with the expected layout.
+
+    Each band has a characteristic range, so a mis-ordered stack can be caught
+    instead of silently producing nonsense. This matters: real stacks have been
+    encountered in the wild ordered as [4 spectral indices][4 optical] with no
+    terrain bands at all, which normalising blindly would turn into garbage
+    without any error.
+
+    Returns a list of human-readable complaints; empty means consistent.
+    """
+    problems: list[str] = []
+    if stack.ndim != 3 or stack.shape[0] != N_CHANNELS:
+        return [f"expected shape ({N_CHANNELS}, H, W), got {stack.shape}"]
+
+    finite = [b[np.isfinite(b)] for b in stack]
+    if any(f.size == 0 for f in finite):
+        return ["one or more bands contain no finite values"]
+
+    lo = [float(f.min()) for f in finite]
+    hi = [float(f.max()) for f in finite]
+
+    # Optical bands are non-negative 10-bit digital numbers.
+    for i in range(4):
+        if lo[i] < -1e-6 or hi[i] > OPTICAL_MAX * 1.05:
+            problems.append(
+                f"band {i} ({CHANNEL_NAMES[i]}) should be 0..{OPTICAL_MAX:.0f}, got {lo[i]:.3f}..{hi[i]:.3f}"
+            )
+        elif hi[i] <= 1.0 and lo[i] >= -1.0:
+            problems.append(
+                f"band {i} ({CHANNEL_NAMES[i]}) looks like an index in [-1,1], not optical DN"
+            )
+    if hi[4] <= 1.05:
+        problems.append(f"band 4 (DEM) should be metres, got max {hi[4]:.3f} — is this an index?")
+    if hi[5] > SLOPE_MAX * 1.05 or lo[5] < -1e-6:
+        problems.append(f"band 5 (SLOPE) should be 0..90 degrees, got {lo[5]:.3f}..{hi[5]:.3f}")
+    if hi[6] > ASPECT_MAX * 1.05 or lo[6] < -1e-6:
+        problems.append(f"band 6 (ASPECT) should be 0..360 degrees, got {lo[6]:.3f}..{hi[6]:.3f}")
+    if lo[7] < -1.05 or hi[7] > 1.05:
+        problems.append(f"band 7 (NDWI) should be -1..1, got {lo[7]:.3f}..{hi[7]:.3f}")
+    return problems
+
+
+def normalize_stack(stack: np.ndarray, strict: bool = False) -> np.ndarray:
     """Scale an 8-band input stack to [0, 1].
 
     Mirrors ``GlacialLakeDataset.__getitem__`` in ``notebooks/R_Hybrid.ipynb``
     exactly. Any change here must be made for training and inference together.
 
     Args:
-        stack: float array of shape ``(8, H, W)``.
+        stack: float array of shape ``(8, H, W)``, ordered as CHANNEL_NAMES.
+        strict: when True, raise if the band values look inconsistent with the
+            expected layout instead of only warning.
 
     Returns:
         A new normalised array. The input is not modified.
 
     Raises:
-        ValueError: if the stack does not have exactly 8 channels.
+        ValueError: if the stack does not have exactly 8 channels, or if
+            ``strict`` is set and the layout check fails.
     """
     if stack.ndim != 3 or stack.shape[0] != N_CHANNELS:
         raise ValueError(
             f"Expected an array of shape ({N_CHANNELS}, H, W), got {stack.shape}. "
             f"Bands must be ordered: {', '.join(CHANNEL_NAMES)}."
         )
+
+    problems = check_band_layout(stack)
+    if problems:
+        message = "Input stack does not match the expected band layout:\n  " + "\n  ".join(problems)
+        if strict:
+            raise ValueError(message)
+        warnings.warn(message, RuntimeWarning, stacklevel=2)
 
     # Copy so callers keep their original data; the previous implementation
     # mutated the caller's array in place via `/=`.
