@@ -45,3 +45,4 @@ ipykernel==7.3.0
 fastapi==0.141.1
 uvicorn[standard]==0.52.3
 python-multipart==0.0.32
+pillow==12.2.0

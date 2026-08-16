@@ -101,6 +101,9 @@ export default function AnalyzeImagePage() {
     const [statusMessage, setStatusMessage] = useState<string | null>(null);
     const [threshold, setThreshold] = useState(0.5);
     const [mcPasses, setMcPasses] = useState(0);
+    const [method, setMethod] = useState<'indices' | 'model'>('indices');
+    const [ndwiThreshold, setNdwiThreshold] = useState(0.15);
+    const [minElevation, setMinElevation] = useState(3500);
     const [serviceStatus, setServiceStatus] = useState<'checking' | 'ready' | 'down'>('checking');
 
     // Surface up-front whether the Python model service is reachable, rather
@@ -162,8 +165,11 @@ export default function AnalyzeImagePage() {
         try {
             const form = new FormData();
             form.append('file', file);
+            form.append('method', method);
             form.append('threshold', String(threshold));
             form.append('mc_passes', String(mcPasses));
+            form.append('ndwi_threshold', String(ndwiThreshold));
+            form.append('min_elevation_m', String(minElevation));
 
             const response = await fetch('/api/segment', { method: 'POST', body: form });
             const payload = await response.json();
@@ -223,20 +229,50 @@ export default function AnalyzeImagePage() {
                             Expects an 8-band stack: 4 LISS-3 optical bands, DEM, slope, aspect, NDWI.
                         </p>
 
-                        <div className="mt-6 grid grid-cols-2 gap-4 text-sm">
-                            <label className="block">
-                                <span className="text-slate-600">Threshold: <span className="font-mono">{threshold.toFixed(2)}</span></span>
-                                <input type="range" min={0.05} max={0.95} step={0.05} value={threshold}
-                                    onChange={(e) => setThreshold(parseFloat(e.target.value))}
-                                    className="w-full mt-1" />
-                            </label>
-                            <label className="block">
-                                <span className="text-slate-600">Uncertainty passes: <span className="font-mono">{mcPasses === 0 ? 'off' : mcPasses}</span></span>
-                                <input type="range" min={0} max={30} step={2} value={mcPasses}
-                                    onChange={(e) => setMcPasses(parseInt(e.target.value, 10))}
-                                    className="w-full mt-1" />
-                            </label>
+                        <div className="mt-6">
+                            <span className="text-sm text-slate-600 font-medium">Detection method</span>
+                            <div className="mt-2 grid grid-cols-2 gap-3">
+                                <button type="button" onClick={() => setMethod('indices')}
+                                    className={`rounded-md border p-3 text-left transition-colors ${method === 'indices' ? 'border-blue-500 bg-blue-50' : 'border-slate-300 hover:bg-slate-50'}`}>
+                                    <div className="font-semibold text-sm text-slate-800">Spectral indices</div>
+                                    <div className="text-xs text-slate-500 mt-1">NDWI, MNDWI and AWEI with terrain filters. Works on any supported stack.</div>
+                                </button>
+                                <button type="button" onClick={() => setMethod('model')}
+                                    className={`rounded-md border p-3 text-left transition-colors ${method === 'model' ? 'border-blue-500 bg-blue-50' : 'border-slate-300 hover:bg-slate-50'}`}>
+                                    <div className="font-semibold text-sm text-slate-800">Hybrid model</div>
+                                    <div className="text-xs text-slate-500 mt-1">GLNet + Attention U-Net. Needs a stack with DEM, slope and aspect.</div>
+                                </button>
+                            </div>
                         </div>
+
+                        {method === 'indices' ? (
+                            <div className="mt-4 grid grid-cols-2 gap-4 text-sm">
+                                <label className="block">
+                                    <span className="text-slate-600">NDWI threshold: <span className="font-mono">{ndwiThreshold.toFixed(2)}</span></span>
+                                    <input type="range" min={0.0} max={0.5} step={0.05} value={ndwiThreshold}
+                                        onChange={(e) => setNdwiThreshold(parseFloat(e.target.value))} className="w-full mt-1" />
+                                </label>
+                                <label className="block">
+                                    <span className="text-slate-600">Min elevation: <span className="font-mono">{minElevation === 0 ? 'off' : `${minElevation} m`}</span></span>
+                                    <input type="range" min={0} max={5000} step={250} value={minElevation}
+                                        onChange={(e) => setMinElevation(parseInt(e.target.value, 10))} className="w-full mt-1" />
+                                    <span className="text-[10px] text-slate-400">Excludes valley water; needs a DEM band.</span>
+                                </label>
+                            </div>
+                        ) : (
+                            <div className="mt-4 grid grid-cols-2 gap-4 text-sm">
+                                <label className="block">
+                                    <span className="text-slate-600">Threshold: <span className="font-mono">{threshold.toFixed(2)}</span></span>
+                                    <input type="range" min={0.05} max={0.95} step={0.05} value={threshold}
+                                        onChange={(e) => setThreshold(parseFloat(e.target.value))} className="w-full mt-1" />
+                                </label>
+                                <label className="block">
+                                    <span className="text-slate-600">Uncertainty passes: <span className="font-mono">{mcPasses === 0 ? 'off' : mcPasses}</span></span>
+                                    <input type="range" min={0} max={30} step={2} value={mcPasses}
+                                        onChange={(e) => setMcPasses(parseInt(e.target.value, 10))} className="w-full mt-1" />
+                                </label>
+                            </div>
+                        )}
 
                         {serviceStatus === 'down' && (
                             <div className="mt-4 rounded-md border border-amber-300 bg-amber-50 px-4 py-3 text-sm text-amber-900">
@@ -299,6 +335,8 @@ export default function AnalyzeImagePage() {
                                 <CardHeader><CardTitle className="text-center text-blue-800">Run Details</CardTitle></CardHeader>
                                 <CardContent className="text-sm text-slate-700">
                                     <div className="grid grid-cols-2 gap-x-6 gap-y-1 font-mono text-xs">
+                                        <div className="flex justify-between"><span>Method</span><span>{analysisResult.stats.method}</span></div>
+                                        <div className="flex justify-between"><span>Band layout</span><span>{analysisResult.stats.bandLayout}</span></div>
                                         <div className="flex justify-between"><span>Raster</span><span>{analysisResult.stats.rasterSize?.join(' × ')}</span></div>
                                         <div className="flex justify-between"><span>CRS</span><span>{analysisResult.stats.crs ?? 'none'}</span></div>
                                         <div className="flex justify-between"><span>Threshold</span><span>{analysisResult.stats.threshold}</span></div>

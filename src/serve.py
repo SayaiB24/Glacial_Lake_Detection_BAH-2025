@@ -30,7 +30,47 @@ from fastapi import FastAPI, File, Form, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
-from model import N_CHANNELS, load_hybrid_model, mc_dropout_predict, normalize_stack
+from model import N_CHANNELS, check_band_layout, load_hybrid_model, mc_dropout_predict, normalize_stack
+from water_index import detect_water
+
+
+def detect_layout(sample: np.ndarray) -> dict:
+    """Work out which band layout an uploaded stack uses.
+
+    Two layouts exist in this project and they are not interchangeable:
+
+      "model"   [Green, Red, NIR, SWIR, DEM, slope, aspect, NDWI]
+                what the hybrid network was trained on
+      "indices" [4 spectral indices, Green, Red, NIR, SWIR]
+                what the published LISS3_*_input_stack.tif files contain
+
+    They are told apart by range: indices lie in [-1, 1] while reflectance is
+    non-negative and much larger.
+
+    Returns a dict with the layout name and the index of each usable band,
+    using None where a band is absent.
+    """
+    lo = np.array([np.nanmin(b) for b in sample], dtype=float)
+    hi = np.array([np.nanmax(b) for b in sample], dtype=float)
+    index_like = (lo >= -1.05) & (hi <= 1.05)
+
+    if index_like[:4].all() and not index_like[4:].any():
+        return {
+            "layout": "indices",
+            "green": 4, "red": 5, "nir": 6, "swir": 7,
+            "dem": None, "slope": None, "ndwi": 3,
+        }
+    if not index_like[:4].any():
+        return {
+            "layout": "model",
+            "green": 0, "red": 1, "nir": 2, "swir": 3,
+            "dem": 4, "slope": 5, "ndwi": 7,
+        }
+    return {
+        "layout": "unknown",
+        "green": 0, "red": 1, "nir": 2, "swir": 3,
+        "dem": None, "slope": None, "ndwi": None,
+    }
 
 REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 DEFAULT_MODEL = os.path.join(REPO_ROOT, "notebooks", "hybrid_model_v3_best.pth")
@@ -84,6 +124,41 @@ def health():
         status["detail"] = exc.detail
         return JSONResponse(status.copy(), status_code=503)
     return status
+
+
+def _segment_indices(src, layout, params):
+    """Detect water with spectral indices, tiled to bound memory use."""
+    width, height = src.width, src.height
+    mask = np.zeros((height, width), dtype=np.uint8)
+    full = rasterio.windows.Window(0, 0, width, height)
+    tile = 1024
+
+    for row_off in range(0, height, tile):
+        for col_off in range(0, width, tile):
+            window = rasterio.windows.Window(col_off, row_off, tile, tile).intersection(full)
+            data = src.read(window=window).astype(np.float32)
+            if data.shape[1] == 0 or data.shape[2] == 0:
+                continue
+
+            def band(key):
+                idx = layout.get(key)
+                return data[idx] if idx is not None else None
+
+            sub, _ = detect_water(
+                green=data[layout["green"]],
+                red=data[layout["red"]],
+                nir=data[layout["nir"]],
+                swir=data[layout["swir"]],
+                dem=band("dem"),
+                slope=band("slope"),
+                ndwi_threshold=params["ndwi_threshold"],
+                mndwi_threshold=params["mndwi_threshold"],
+                max_slope_deg=params["max_slope_deg"],
+                min_elevation_m=params["min_elevation_m"],
+                min_pixels=params["min_pixels"],
+            )
+            mask[row_off : row_off + sub.shape[0], col_off : col_off + sub.shape[1]] = sub
+    return mask, None
 
 
 def _segment(src, model, patch_size: int, threshold: float, mc_passes: int):
@@ -171,12 +246,24 @@ def _mask_to_features(mask, src, uncertainty, min_area_m2: float):
 @app.post("/predict")
 async def predict(
     file: UploadFile = File(...),
+    method: str = Form("indices"),
     threshold: float = Form(0.5),
     patch_size: int = Form(256),
     mc_passes: int = Form(0),
     min_area_ha: float = Form(0.05),
+    ndwi_threshold: float = Form(0.15),
+    mndwi_threshold: float = Form(0.10),
+    max_slope_deg: float = Form(15.0),
+    min_elevation_m: float = Form(0.0),
 ):
-    """Segment an uploaded 8-band GeoTIFF and return lake polygons as GeoJSON."""
+    """Segment an uploaded 8-band GeoTIFF and return lake polygons as GeoJSON.
+
+    method="indices" uses NDWI/MNDWI/AWEI with terrain constraints and works on
+    either stack layout. method="model" runs the trained hybrid network, which
+    requires the [optical, DEM, slope, aspect, NDWI] layout.
+    """
+    if method not in ("indices", "model"):
+        raise HTTPException(400, f"method must be 'indices' or 'model', got {method!r}")
     if not 0.0 < threshold < 1.0:
         raise HTTPException(400, f"threshold must be between 0 and 1, got {threshold}")
     if patch_size % 32:
@@ -188,23 +275,54 @@ async def predict(
     if len(payload) > MAX_UPLOAD_BYTES:
         raise HTTPException(413, f"Upload exceeds {MAX_UPLOAD_BYTES // (1024*1024)} MB")
 
-    model = get_model()
     started = time.perf_counter()
 
     try:
         with rasterio.open(io.BytesIO(payload)) as src:
             if src.count != N_CHANNELS:
                 raise HTTPException(
-                    400,
-                    f"Expected {N_CHANNELS} bands (4 optical, DEM, slope, aspect, NDWI), "
-                    f"got {src.count}.",
+                    400, f"Expected {N_CHANNELS} bands, got {src.count}."
                 )
             if src.width * src.height > MAX_PIXELS:
                 raise HTTPException(
                     413, f"Raster has {src.width * src.height:,} pixels, limit is {MAX_PIXELS:,}"
                 )
 
-            mask, uncertainty = _segment(src, model, patch_size, threshold, mc_passes)
+            # Sample a window to work out the layout before reading everything.
+            probe_win = rasterio.windows.Window(
+                0, 0, min(src.width, 512), min(src.height, 512)
+            )
+            layout = detect_layout(src.read(window=probe_win).astype(np.float32))
+            if layout["layout"] == "unknown":
+                raise HTTPException(
+                    400,
+                    "Could not identify the band layout. Expected either "
+                    "[Green, Red, NIR, SWIR, DEM, slope, aspect, NDWI] or "
+                    "[4 indices, Green, Red, NIR, SWIR].",
+                )
+
+            if method == "model":
+                if layout["layout"] != "model":
+                    raise HTTPException(
+                        400,
+                        f"The hybrid model needs the [optical, DEM, slope, aspect, NDWI] "
+                        f"layout, but this file uses the '{layout['layout']}' layout. "
+                        f"Use method=indices for this file.",
+                    )
+                model = get_model()
+                mask, uncertainty = _segment(src, model, patch_size, threshold, mc_passes)
+            else:
+                mask, uncertainty = _segment_indices(
+                    src,
+                    layout,
+                    {
+                        "ndwi_threshold": ndwi_threshold,
+                        "mndwi_threshold": mndwi_threshold,
+                        "max_slope_deg": max_slope_deg,
+                        "min_elevation_m": min_elevation_m or None,
+                        "min_pixels": 8,
+                    },
+                )
             features = _mask_to_features(mask, src, uncertainty, min_area_ha * 10_000)
 
             bounds = src.bounds
@@ -216,14 +334,16 @@ async def predict(
                 left, bottom, right, top = bounds
 
             stats = {
+                "method": method,
+                "bandLayout": layout["layout"],
                 "lakeCount": len(features),
                 "totalAreaHa": round(sum(f["properties"]["area_ha"] for f in features), 4),
                 "lakePixels": int(mask.sum()),
                 "totalPixels": int(mask.size),
                 "coveragePercent": round(100 * float(mask.mean()), 4),
                 "processingSeconds": round(time.perf_counter() - started, 2),
-                "threshold": threshold,
-                "mcPasses": mc_passes,
+                "threshold": threshold if method == "model" else ndwi_threshold,
+                "mcPasses": mc_passes if method == "model" else 0,
                 "device": DEVICE,
                 "rasterSize": [src.width, src.height],
                 "crs": str(src.crs) if src.crs else None,

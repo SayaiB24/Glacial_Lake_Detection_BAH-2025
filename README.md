@@ -65,15 +65,47 @@ and that page reports clearly when the service is not reachable.
 
 1. Start both processes above.
 2. Open <http://localhost:3000/analyze-image>.
-3. Upload an 8-band GeoTIFF (4 LISS-3 optical bands, DEM, slope, aspect, NDWI).
-4. Optionally adjust the detection threshold, and set uncertainty passes above 0
-   to enable Monte Carlo dropout.
+3. Upload an 8-band GeoTIFF. Either supported layout works — the service detects
+   which one it is.
+4. Choose a detection method:
+   - **Spectral indices** (default) — NDWI, MNDWI and AWEInsh with vegetation,
+     slope and elevation filters. Works on any supported stack and is the method
+     to use today.
+   - **Hybrid model** — the trained GLNet + Attention U-Net. Requires the
+     `[optical, DEM, slope, aspect, NDWI]` layout, and see the caveat below.
 5. Detected lakes are drawn as polygons on a satellite basemap, with per-lake
    areas, total area, scene coverage and processing time.
 
-The service tiles the scene, runs the hybrid model over each tile, stitches the
-mask, vectorises it and reprojects the polygons to EPSG:4326, so results overlay
-correctly on the map regardless of the source projection.
+Results are vectorised and reprojected to EPSG:4326, so they overlay correctly
+regardless of the source projection.
+
+#### Which method to use
+
+**Use spectral indices.** On real LISS-3 imagery over Zanskar it recovers 9
+lakes totalling 131 ha with mean NDWI +0.365 against a background of −0.059, at
+a mean slope of 7.1° against a background of 27.4° — flat, high, and
+water-bright, as glacial lakes should be.
+
+**The hybrid model is not currently usable on this imagery.** On the same scene
+it predicted 15.6% of all pixels as lake, uncorrelated with NDWI, while
+predicting nothing at all on a lower-elevation window. Its response tracks
+elevation rather than water. Whether that is a limitation of the model or of the
+substituted terrain bands cannot be settled without the original training
+chunks, so the method is left available but is not the default.
+
+### Building a model-compatible stack
+
+`LISS3_1_input_stack.tif` has no DEM, slope or aspect. `src/build_stack.py`
+fetches public elevation tiles for the same footprint, derives slope and aspect,
+and writes a stack in the layout the model expects:
+
+```bash
+.venv\Scripts\python.exe src/build_stack.py LISS3_1_input_stack.tif out.tif ^
+    --col 5760 --row 384 --size 1024
+```
+
+It reports the elevation, slope and aspect ranges and runs `check_band_layout()`
+on the result, so a stack that would not work is caught before inference.
 
 Configuration via environment variables: `GLOF_MODEL_PATH` (checkpoint),
 `GLOF_DEVICE` (`cpu` or `cuda`), `GLOF_MAX_UPLOAD_MB`, `GLOF_MAX_PIXELS`, and
