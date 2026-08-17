@@ -536,6 +536,20 @@ function GISMap() {
     activeDrawHandlerRef.current = handler;
   };
 
+  // These panels show either inventory lakes (ID_No / Area_ha / Name) or lakes
+  // just detected from imagery (lake_id / area_ha). Reading only the inventory
+  // field left every row blank whenever detection results were displayed.
+  const describeLake = (lake: any): string => {
+    const p = lake?.properties ?? {};
+    return p.Name?.trim() || p.lake_id || p.ID_No || "Unnamed lake";
+  };
+
+  const lakeAreaHa = (lake: any): string => {
+    const p = lake?.properties ?? {};
+    const area = typeof p.Area_ha === "number" ? p.Area_ha : p.area_ha;
+    return typeof area === "number" ? `${area.toFixed(2)} ha` : "—";
+  };
+
   /** True when any part of the lake intersects the selected bounds. */
   const isLakeInArea = (feature: GeoJsonFeature, bounds: L.LatLngBounds): boolean => {
     const geom = feature.geometry;
@@ -1034,8 +1048,15 @@ function GISMap() {
                             <span className="font-bold">{analysisResult.lakes.length}</span>
                           </div>
                           <div>
-                            <h4>Lake IDs:</h4>
-                            <ul>{analysisResult.lakes.map((lake, index) => (<li key={index}>{lake.properties.ID_No}</li>))}</ul>
+                            <h4 className="font-medium">Lakes:</h4>
+                            <ul className="mt-1 space-y-0.5 max-h-48 overflow-y-auto">
+                              {analysisResult.lakes.map((lake, index) => (
+                                <li key={index} className="flex justify-between gap-3 text-xs">
+                                  <span className="truncate">{describeLake(lake)}</span>
+                                  <span className="font-mono shrink-0">{lakeAreaHa(lake)}</span>
+                                </li>
+                              ))}
+                            </ul>
                           </div>
                         </div>
                       )}
@@ -1385,8 +1406,18 @@ function GISMap() {
                     <X className="w-4 h-4" />
                 </Button>
             </div>
-            <div className="cursor-auto">
-                <ul>{lakesInfo.map((lake, index) => (<li key={index}>{lake.properties.ID_No}</li>))}</ul>
+            <div className="cursor-auto max-h-64 overflow-y-auto min-w-56">
+                <ul className="space-y-0.5">
+                  {lakesInfo.map((lake, index) => (
+                    <li key={index} className="flex justify-between gap-4 text-sm">
+                      <span className="truncate">{describeLake(lake)}</span>
+                      <span className="font-mono text-gray-600 shrink-0">{lakeAreaHa(lake)}</span>
+                    </li>
+                  ))}
+                </ul>
+                {lakesInfo.length === 0 && (
+                  <p className="text-sm text-gray-500">No lakes to show.</p>
+                )}
             </div>
         </div>
       )}
