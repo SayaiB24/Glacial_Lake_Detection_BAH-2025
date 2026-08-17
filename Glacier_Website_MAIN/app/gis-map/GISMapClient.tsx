@@ -574,22 +574,67 @@ function GISMap() {
       analysisLayerRef.current = null;
     }
     try {
-      setProcessingStatus("Requesting satellite imagery...");
-      await new Promise((resolve) => setTimeout(resolve, 1500));
-      setProcessingStatus("Analyzing image with AI model...");
-      const lakesInArea = (sikkimShape as GeoJsonFeatureCollection).features.filter(
-        (feature: GeoJsonFeature) => isLakeInArea(feature, drawnArea!)
-      );
-      setAnalysisResult({ lakes: lakesInArea });
-      setLakesInfo(lakesInArea);
-      setProcessingStatus("Analysis complete.");
-      analysisLayerRef.current = L.geoJSON({ type: "FeatureCollection", features: lakesInArea } as GeoJsonFeatureCollection, {
-          style: { color: "#be123c", weight: 2, fillColor: "#f43f5e", fillOpacity: 0.7 },
-          onEachFeature: (feature: GeoJsonFeature, layer: L.Layer) => {
-            layer.bindPopup(`<b>Lake ID:</b> ${feature.properties.ID_No}`);
-          },
+      // Run detection over the drawn rectangle rather than filtering the static
+      // inventory, so this reports what the imagery shows for the chosen year.
+      const sw = drawnArea!.getSouthWest();
+      const ne = drawnArea!.getNorthEast();
+      const areaPolygon = {
+        type: "Polygon",
+        coordinates: [[
+          [sw.lng, sw.lat], [ne.lng, sw.lat], [ne.lng, ne.lat], [sw.lng, ne.lat], [sw.lng, sw.lat],
+        ]],
+      };
+
+      setProcessingStatus("Building a cloud-free Landsat composite for the selected area…");
+      const response = await fetch("/api/process-area", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ area: areaPolygon, year: parseInt(selectedYear, 10) }),
+      });
+      const payload = await response.json();
+
+      if (!response.ok) {
+        // Without Earth Engine, fall back to reporting the inventory lakes that
+        // fall inside the rectangle. That is real data, just not freshly detected.
+        const inventoryLakes = sikkimShape.features.filter((f) => isLakeInArea(f, drawnArea!));
+        if (response.status === 503 && inventoryLakes.length) {
+          setAnalysisResult({ lakes: inventoryLakes });
+          setLakesInfo(inventoryLakes);
+          analysisLayerRef.current = L.geoJSON(
+            { type: "FeatureCollection", features: inventoryLakes } as GeoJsonFeatureCollection,
+            { style: { color: "#be123c", weight: 2, fillColor: "#f43f5e", fillOpacity: 0.7 } },
+          ).addTo(mapInstance.current!);
+          setProcessingStatus(
+            `Earth Engine unavailable — showing ${inventoryLakes.length} inventory lakes in this area instead.`,
+          );
+          return;
         }
-      ).addTo(mapInstance.current!);
+        throw new Error(payload?.details || payload?.error || `HTTP ${response.status}`);
+      }
+
+      const detected = payload.polygons?.features ?? [];
+      const stats = payload.stats ?? {};
+
+      analysisLayerRef.current = L.geoJSON(payload.polygons, {
+        style: { color: "#be123c", weight: 2, fillColor: "#f43f5e", fillOpacity: 0.7 },
+        onEachFeature: (feature: any, layer: L.Layer) => {
+          layer.bindPopup(
+            `<b>${feature.properties?.lake_id ?? "Lake"}</b><br/>Area: ${
+              feature.properties?.area_ha?.toFixed(3) ?? "?"
+            } ha`,
+          );
+        },
+      }).addTo(mapInstance.current!);
+
+      setAnalysisResult({ lakes: detected as any });
+      setLakesInfo(detected as any);
+      setProcessingStatus(
+        `Detected ${stats.lake_count ?? detected.length} lakes totalling ${
+          stats.total_area_ha?.toFixed?.(2) ?? "?"
+        } ha across ${stats.area_searched_km2 ?? "?"} km², from ${
+          stats.landsat_images ?? "?"
+        } Landsat scenes in ${stats.year ?? selectedYear} (${stats.processing_time_sec ?? "?"}s).`,
+      );
     } catch (error: unknown) {
       if (error instanceof Error) {
         setProcessingStatus(`Error: ${error.message}`);

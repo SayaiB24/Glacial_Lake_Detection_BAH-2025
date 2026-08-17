@@ -433,15 +433,15 @@ around 100 people downstream. Current distribution: 65 High, 178 Moderate,
    entirely — see "Input stack layouts" below. Detection accuracy therefore
    remains unmeasured, and the segmentation path is verified only on synthetic
    scenes.
-2. **Two analysis endpoints are still mocked.** `/api/process-area` and `/api/compare-images` return `Math.random()` values rather than model output, and neither is reachable from the UI. `/api/segment` supersedes them and does real inference. (`/api/risk-alerts` is also real now — it ranks the actual inventory.)
-2. **Path traversal in `server.js`.** `/downloads/reports/:filename` joins an unsanitised parameter into a filesystem path; a URL-encoded `..%2F` escapes the reports directory. This legacy Express server is superseded by the Next.js app.
-3. **Hardcoded paths in `src/*.py` and the notebooks.** `R_Hybrid.ipynb` cell 6 and the `load_inp_stack*.py` / `prefix_*.py` helpers still point at machine-specific directories. Edit before running.
-4. **The notebooks still define their own copy of the model and normalisation.** They should import from `src/model.py` so the two cannot drift apart again.
-5. **Earth Engine is not configured**, so multi-year time series are unavailable and the map falls back to the two inventory epochs. See the Earth Engine section for setup.
-6. **Junk dependencies.** `package.json` lists `"fs"` and `"path"` as npm packages; both are Node built-ins. `express` and `cors` are pinned to `latest`.
-7. **`Glacier_Website_MAIN/requirement.txt`** lists npm package names despite its Python-style filename.
-8. **`components/MapDisplay.tsx` is dead code** that imports four GeoJSON files which do not exist.
-9. **Build error suppression.** `next.config.mjs` sets `typescript.ignoreBuildErrors` and `eslint.ignoreDuringBuilds` to `true`, which hides genuine errors. TypeScript is currently clean, so these can be turned off.
+2. **Area detection under-measures large lakes.** Drawing a box over South Lhonak returns it at 90.8 ha against the inventory's 158.0 ha. A yearly median composite includes partially ice-covered dates, and the slope and NDWI filters trim lake margins, so detected areas are conservative. Locations are reliable; areas should be read as a lower bound.
+3. **`/api/compare-images` is still mocked**, returning `Math.random()` values. It is not reachable from the UI, and `/api/segment` supersedes it.
+4. **Path traversal in `server.js`.** `/downloads/reports/:filename` joins an unsanitised parameter into a filesystem path; a URL-encoded `..%2F` escapes the reports directory. This legacy Express server is superseded by the Next.js app.
+5. **Hardcoded paths in `src/*.py` and the notebooks.** `R_Hybrid.ipynb` cell 6 and the `load_inp_stack*.py` / `prefix_*.py` helpers still point at machine-specific directories. Edit before running.
+6. **The notebooks still define their own copy of the model and normalisation.** They should import from `src/model.py` so the two cannot drift apart again.
+7. **Junk dependencies.** `package.json` lists `"fs"` and `"path"` as npm packages; both are Node built-ins. `express` and `cors` are pinned to `latest`.
+8. **`Glacier_Website_MAIN/requirement.txt`** lists npm package names despite its Python-style filename.
+9. **`components/MapDisplay.tsx` is dead code** that imports four GeoJSON files which do not exist.
+10. **Build error suppression.** `next.config.mjs` sets `typescript.ignoreBuildErrors` and `eslint.ignoreDuringBuilds` to `true`, which hides genuine errors. TypeScript is currently clean, so these can be turned off.
 
 ---
 
