@@ -12,6 +12,34 @@ Glacial lakes are expanding as the climate warms, raising the risk of Glacial La
 
 ---
 
+## Lake inventory
+
+`Glacier_Website_MAIN/public/himalaya_lakes.geojson` holds **22,508 glacial
+lakes across the Himalaya** (72–97 °E, 26–37 °N), filtered from the High
+Mountain Asia inventory of 31,698 lakes for 2022.
+
+Source: *Inventory of Glacial Lakes in High Mountain Asia for the Periods
+2016-2017 and 2022-2024*, [doi:10.5281/zenodo.17948783](https://doi.org/10.5281/zenodo.17948783),
+CC-BY-4.0. Built from Landsat-8, Sentinel-1, Sentinel-2 and the Copernicus DEM,
+with 96% detection accuracy for lakes of 20,000–100,000 m².
+
+Two things were added to the published data:
+
+- **Measured area change.** The 2016-2017 epoch was matched to the 2022 epoch by
+  centroid proximity (300 m tolerance, pairs differing by more than 12× in area
+  rejected as mis-matches). 18,603 lakes (82.7%) matched. Median change is
+  **+1.17%**, and **58.4% of matched lakes grew**.
+- **NRSC attributes.** Where a lake matches the NRSC Sikkim inventory within
+  400 m, its dam classification, name, basin and district are carried across —
+  325 lakes, of which 50 are named.
+
+Geometry is simplified to 0.00015° (~15 m, close to the source resolution) and
+coordinates rounded to 5 decimals, giving 17.9 MB raw and about 4.3 MB gzipped.
+
+The dam classification that dominates the risk index exists for only those 325
+lakes. `assessLake()` omits that factor when it is unknown and renormalises over
+the rest, rather than scoring an unclassified lake as though its dam were safe.
+
 ## Repository layout
 
 ```
@@ -117,7 +145,8 @@ These are excluded by `.gitignore` and are **not** in the repository. The app bu
 
 | File | Location | Enables |
 |---|---|---|
-| `sikkim_shape.geojson` | `Glacier_Website_MAIN/public/` | Lake inventory layer, lake selection, time-series analysis on `/gis-map` |
+| `himalaya_lakes.geojson` | `Glacier_Website_MAIN/public/` | **Committed.** Lake inventory layer, lake selection, trend and risk analysis |
+| `sikkim_shape.geojson` | `Glacier_Website_MAIN/public/` | **Committed.** NRSC Sikkim source, retained for provenance |
 | `lakes.geojson`, `rivers.geojson`, `glaciers.geojson`, `watersheds.geojson` | — | The `/map` page (also needs the `/api/data/*` routes to be written) |
 | Trained weights (`hybrid_model_best.pth` etc.) | `notebooks/` | Model inference |
 

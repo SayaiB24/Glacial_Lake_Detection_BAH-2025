@@ -42,13 +42,18 @@ export type RiskLevel = "Low" | "Moderate" | "High";
 export interface LakeProperties {
   ID_No: string;
   Name: string | null;
-  GL_Type: string;
+  /** NRSC dam classification. Absent in the HMA inventory for most lakes. */
+  GL_Type?: string | null;
   Area_ha: number;
   Elev_m: number;
   Basin?: string;
   District?: string;
   Latitude?: number;
   Longitude?: number;
+  /** Measured area change between inventory epochs, where both were matched. */
+  Area_2016_ha?: number | null;
+  AreaChangePct?: number | null;
+  ChangeRateHaPerYr?: number | null;
 }
 
 export interface RiskFactor {
@@ -179,6 +184,31 @@ export function scoreGrowth(
 }
 
 /**
+ * Score growth from the measured change between inventory epochs.
+ *
+ * Used when no fitted time series is available. Two observations cannot support
+ * a significance test, so the magnitude of the change is used directly and the
+ * detail string makes clear it is a two-epoch comparison rather than a trend.
+ */
+export function scoreMeasuredChange(
+  lake: LakeProperties,
+): { score: number; detail: string } | null {
+  const rate = lake.ChangeRateHaPerYr;
+  const pct = lake.AreaChangePct;
+  if (rate == null || pct == null || !Number.isFinite(rate)) return null;
+
+  if (rate <= 0) {
+    return { score: 0, detail: `Not expanding (${pct.toFixed(1)}% since 2016-17)` };
+  }
+  const pctPerYear = pct / 5.5;
+  const norm = clamp01(pctPerYear / 5);
+  return {
+    score: norm * WEIGHT_GROWTH,
+    detail: `Expanded ${pct.toFixed(1)}% since 2016-17 (${rate >= 0 ? "+" : ""}${rate.toFixed(3)} ha/yr)`,
+  };
+}
+
+/**
  * Compute the screening index for one lake.
  *
  * @param lake  Inventory properties.
@@ -190,16 +220,27 @@ export function assessLake(
   lake: LakeProperties,
   trend?: MannKendallResult | null,
 ): RiskAssessment {
-  const dam = scoreDamType(lake.GL_Type);
   const area = scoreArea(lake.Area_ha);
   const elev = scoreElevation(lake.Elev_m);
-  const growth = scoreGrowth(trend, lake.Area_ha);
 
   const factors: RiskFactor[] = [
-    { name: "Dam type", score: dam.score, max: WEIGHT_DAM_TYPE, detail: dam.detail },
     { name: "Lake area", score: area.score, max: WEIGHT_AREA, detail: area.detail },
     { name: "Elevation", score: elev.score, max: WEIGHT_ELEVATION, detail: elev.detail },
   ];
+
+  // Dam type is the strongest signal but only the NRSC-derived lakes carry it.
+  // Omit the factor entirely when unknown rather than scoring it as safe, so the
+  // remaining factors are renormalised instead of every lake looking benign.
+  if (lake.GL_Type) {
+    const dam = scoreDamType(lake.GL_Type);
+    factors.unshift({ name: "Dam type", score: dam.score, max: WEIGHT_DAM_TYPE, detail: dam.detail });
+  }
+
+  // Prefer a Mann-Kendall trend when a time series exists; otherwise fall back
+  // to the measured change between inventory epochs.
+  const growth = trend
+    ? scoreGrowth(trend, lake.Area_ha)
+    : scoreMeasuredChange(lake);
   if (growth) {
     factors.push({ name: "Growth trend", score: growth.score, max: WEIGHT_GROWTH, detail: growth.detail });
   }
@@ -219,7 +260,7 @@ export function assessLake(
     usedTrend: Boolean(growth),
     areaHa: lake.Area_ha,
     elevationM: lake.Elev_m,
-    lakeType: lake.GL_Type,
+    lakeType: lake.GL_Type ?? "Unclassified",
   };
 }
 

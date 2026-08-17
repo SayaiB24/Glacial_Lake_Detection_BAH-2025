@@ -153,7 +153,7 @@ function GISMap() {
   const [showHimalayaGraph, setShowHimalayaGraph] = useState(false);
   const [showLakeMask, setShowLakeMask] = useState(true);
   // Lake inventory is loaded at runtime from /public so the app builds and runs
-  // even when sikkim_shape.geojson has not been supplied.
+  // even when himalaya_lakes.geojson has not been supplied.
   const [sikkimShape, setSikkimShape] = useState<GeoJsonFeatureCollection>({ type: "FeatureCollection", features: [] });
   const [lakeDataError, setLakeDataError] = useState<string | null>(null);
   const [measureMode, setMeasureMode] = useState<"distance" | "area" | null>(null);
@@ -369,7 +369,7 @@ function GISMap() {
     let cancelled = false;
     const loadLakeInventory = async () => {
       try {
-        const response = await fetch("/sikkim_shape.geojson");
+        const response = await fetch("/himalaya_lakes.geojson");
         if (!response.ok) throw new Error(`HTTP ${response.status}`);
         const data = (await response.json()) as GeoJsonFeatureCollection;
         if (!data || data.type !== "FeatureCollection" || !Array.isArray(data.features)) {
@@ -384,9 +384,9 @@ function GISMap() {
           const detail = error instanceof Error ? error.message : "Unknown error";
           // Expected when the (gitignored) inventory has not been supplied, so warn
           // rather than error — console.error trips the Next.js dev error overlay.
-          console.warn("Lake inventory not loaded from /sikkim_shape.geojson:", detail);
+          console.warn("Lake inventory not loaded from /himalaya_lakes.geojson:", detail);
           setLakeDataError(
-            "Lake inventory unavailable — add sikkim_shape.geojson to the public/ folder to enable the lake layer."
+            "Lake inventory unavailable — add himalaya_lakes.geojson to the public/ folder to enable the lake layer."
           );
         }
       }
@@ -742,8 +742,25 @@ function GISMap() {
         });
 
         if (!response.ok) {
-            const err = await response.json();
-            throw new Error(err.details || "Failed to get data from GEE.");
+            const err = await response.json().catch(() => ({}));
+            const detail: string = err.details || err.error || `HTTP ${response.status}`;
+
+            // Earth Engine needs a service-account key that most checkouts will
+            // not have. Rather than dead-ending, fall back to the area change
+            // measured directly between the two inventory epochs.
+            const fallback = buildEpochComparison();
+            if (fallback) {
+                setTimeSeriesResult(fallback);
+                setProcessingStatus(
+                    "Earth Engine is not configured, so this shows measured change between the 2016-17 and 2022 inventories instead.",
+                );
+                return;
+            }
+            throw new Error(
+                /GEE_CREDENTIALS_JSON/.test(detail)
+                    ? "Earth Engine is not configured on this server, and this lake has no matched 2016-17 record to compare against. Set GEE_CREDENTIALS_JSON in Glacier_Website_MAIN/.env.local to enable multi-year analysis."
+                    : detail,
+            );
         }
 
         const data = await response.json();
@@ -764,6 +781,27 @@ function GISMap() {
     } finally {
         setIsProcessing(false);
     }
+  };
+
+  /**
+   * Build a two-point series from the selected lake's own inventory records.
+   *
+   * The 2022 inventory carries the matched 2016-2017 area for most lakes, so a
+   * real measured comparison is available without Earth Engine. Two points
+   * cannot support a significance test, which is why the trend panel reports
+   * insufficient data rather than a spurious p-value.
+   */
+  const buildEpochComparison = (): TimeSeriesResult | null => {
+    const p: any = selectedLake?.properties;
+    if (!p || p.Area_2016_ha == null || p.Area_ha == null) return null;
+    return {
+      timeSeriesData: [
+        { year: 2016, area: p.Area_2016_ha, imageCount: 1, featureCount: 1, intersectingCount: 1 },
+        { year: 2022, area: p.Area_ha, imageCount: 1, featureCount: 1, intersectingCount: 1 },
+      ],
+      analysisStartYear: 2016,
+      analysisEndYear: 2022,
+    };
   };
 
   // Generate available years

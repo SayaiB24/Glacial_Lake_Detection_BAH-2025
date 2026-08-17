@@ -7,7 +7,9 @@ import { NextResponse } from "next/server";
 
 import { rankLakes, type LakeProperties, type RiskAssessment } from "@/lib/glofRisk";
 
-const INVENTORY_PATH = path.join(process.cwd(), "public", "sikkim_shape.geojson");
+// Himalaya-wide 2022 inventory, with NRSC attributes merged in where lakes match
+// and measured 2016-2017 to 2022 area change where both epochs matched.
+const INVENTORY_PATH = path.join(process.cwd(), "public", "himalaya_lakes.geojson");
 
 interface InventoryFeature {
   properties: LakeProperties & { DOP?: string };
@@ -40,8 +42,10 @@ async function loadInventory() {
   }
 
   const lakes = parsed.features.map((f) => f.properties).filter(Boolean);
-  // The inventory is a single survey, so every feature shares a DOP.
-  const surveyed = parseDop(lakes[0]?.DOP) ?? "unknown";
+  // NRSC files carry a DOP survey date; the HMA inventory instead labels each
+  // feature with the epoch it was derived from.
+  const first = lakes[0] as (LakeProperties & { DOP?: string; Epoch?: string }) | undefined;
+  const surveyed = parseDop(first?.DOP) ?? first?.Epoch ?? "unknown";
 
   inventoryCache = { lakes, surveyed };
   return inventoryCache;
@@ -59,7 +63,7 @@ export async function GET(request: Request) {
     const { searchParams } = new URL(request.url);
 
     const limitParam = Number.parseInt(searchParams.get("limit") ?? "20", 10);
-    const limit = Number.isFinite(limitParam) ? Math.min(Math.max(limitParam, 1), 718) : 20;
+    const limit = Number.isFinite(limitParam) ? Math.min(Math.max(limitParam, 1), 500) : 20;
     const levelFilter = searchParams.get("level");
 
     const { lakes, surveyed } = await loadInventory();
@@ -100,7 +104,7 @@ export async function GET(request: Request) {
       {
         error: "Could not compute risk alerts.",
         details: detail,
-        hint: "Ensure public/sikkim_shape.geojson is present.",
+        hint: "Ensure public/himalaya_lakes.geojson is present.",
       },
       { status: 500 },
     );
