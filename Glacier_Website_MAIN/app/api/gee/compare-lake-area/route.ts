@@ -361,14 +361,31 @@ export async function POST(request: Request) {
 
     // Distinguish "not set up" from "went wrong": the client falls back to the
     // inventory epochs on 503, but should surface a genuine failure.
-    if (error instanceof GeeNotConfiguredError || /GEE_CREDENTIALS_JSON/.test(error?.message ?? "")) {
+    //
+    // Setup problems are not only a missing key. A valid key whose Cloud project
+    // has never been registered for Earth Engine, or which lacks permission,
+    // fails at the first call — those are still "not configured", not outages,
+    // so they must return 503 for the fallback to engage.
+    const message: string = error?.message ?? "";
+    const setupProblem =
+      error instanceof GeeNotConfiguredError ||
+      /GEE_CREDENTIALS_JSON/i.test(message) ||
+      /not registered to use Earth Engine/i.test(message) ||
+      /authentication failed/i.test(message) ||
+      /permission|forbidden|not authorized|403/i.test(message) ||
+      /has not been used in project|API .* disabled/i.test(message);
+
+    if (setupProblem) {
+      const notRegistered = /not registered to use Earth Engine/i.test(message);
       return NextResponse.json(
         {
           error: "Earth Engine is not configured.",
-          details: error.message,
-          hint:
-            "Create Glacier_Website_MAIN/.env.local with GEE_CREDENTIALS_JSON set to the " +
-            "full JSON of a Google Earth Engine service-account key, on one line, then restart the server.",
+          details: message,
+          hint: notRegistered
+            ? "The service-account key is valid, but its Google Cloud project is not registered " +
+              "for Earth Engine. Register it at the console URL in the details above, then restart."
+            : "Create Glacier_Website_MAIN/.env.local with GEE_CREDENTIALS_JSON set to the " +
+              "full JSON of a Google Earth Engine service-account key, on one line, then restart the server.",
           configured: false,
         },
         { status: 503 },

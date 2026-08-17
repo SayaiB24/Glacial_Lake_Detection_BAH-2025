@@ -13,6 +13,17 @@ __pycache__/
 *.pth
 *.pt
 *.ckpt
+
+# Credentials. Google service-account keys download with names like
+# glacier-gee-d6c301561477.json, so match the shape rather than one filename.
+# A leaked Earth Engine key lets anyone bill compute to the project.
+*service-account*.json
+*-gee-*.json
+*credentials*.json
+gcp-*.json
+.env
+.env.*
+!.env.example
 glacial-lake-detection-BAH-2025-venv/ 
 Resources/
 notebooks/.ipynb_checkpoints/
