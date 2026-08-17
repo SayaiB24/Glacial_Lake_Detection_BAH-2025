@@ -1,35 +1,70 @@
 export const runtime = "nodejs";
+// Earth Engine round trips are slow; a multi-year request can take minutes.
+export const maxDuration = 300;
 
 import { NextResponse } from "next/server";
 import ee from "@google/earthengine";
 
-// Authentication function
-const runGeeAuthentication = () => {
-  return new Promise<void>((resolve, reject) => {
+/** Thrown when no service-account key is configured, so callers can fall back. */
+class GeeNotConfiguredError extends Error {
+  constructor() {
+    super(
+      "Earth Engine is not configured. Create Glacier_Website_MAIN/.env.local " +
+        "containing GEE_CREDENTIALS_JSON set to the full JSON of a service-account key.",
+    );
+    this.name = "GeeNotConfiguredError";
+  }
+}
+
+// Authentication is a process-wide handshake, not a per-request one. Caching the
+// promise means concurrent requests share a single sign-in instead of racing,
+// and later requests skip it entirely.
+let authPromise: Promise<void> | null = null;
+
+const runGeeAuthentication = (): Promise<void> => {
+  if (authPromise) return authPromise;
+
+  authPromise = new Promise<void>((resolve, reject) => {
     try {
       const credentialsJsonString = process.env.GEE_CREDENTIALS_JSON;
-      if (!credentialsJsonString) {
-        throw new Error("Server configuration error: GEE_CREDENTIALS_JSON environment variable is not set.");
+      if (!credentialsJsonString) throw new GeeNotConfiguredError();
+
+      let privateKey: any;
+      try {
+        privateKey = JSON.parse(credentialsJsonString);
+      } catch {
+        throw new Error("GEE_CREDENTIALS_JSON is set but is not valid JSON.");
       }
-      const privateKey = JSON.parse(credentialsJsonString);
-      privateKey.private_key = privateKey.private_key.replace(/\\n/g, '\n');
+      if (!privateKey.private_key || !privateKey.client_email) {
+        throw new Error(
+          "GEE_CREDENTIALS_JSON is missing private_key or client_email — it should be the whole service-account key file.",
+        );
+      }
+      // Tolerate keys stored with literal \n sequences rather than newlines.
+      privateKey.private_key = privateKey.private_key.replace(/\\n/g, "\n");
+
       ee.data.authenticateViaPrivateKey(
         privateKey,
-        () => {
-          console.log("GEE Authentication Successful.");
-          ee.initialize(null, null, resolve, reject);
-        },
-        (error: string) => {
-          console.error("GEE private key authentication error:", error);
-          reject(new Error(error));
-        }
+        () => ee.initialize(null, null, resolve, reject),
+        (error: string) => reject(new Error(`Earth Engine authentication failed: ${error}`)),
       );
-    } catch (e: any) {
-      console.error("Failed to setup GEE Authentication:", e.message);
+    } catch (e) {
       reject(e);
     }
   });
+
+  // A failed handshake must not be cached, or the process can never recover.
+  authPromise.catch(() => {
+    authPromise = null;
+  });
+  return authPromise;
 };
+
+/** Evaluate one Earth Engine object, rejecting on error. */
+const evaluate = <T,>(obj: any): Promise<T> =>
+  new Promise((resolve, reject) => {
+    obj.evaluate((data: T, error: any) => (error ? reject(new Error(String(error))) : resolve(data)));
+  });
 
 /**
  * Simplified lake area calculation using only Landsat 8/9 data
@@ -233,19 +268,43 @@ export async function POST(request: Request) {
       
       console.log(`Running Landsat-only time series analysis from ${startYear} to ${endYear}`);
       
-      const timeSeriesData = getTimeSeriesAnalysis(geometry, startYear, endYear);
-      
-      results = await new Promise((resolve, reject) => {
-        timeSeriesData.evaluate((data: any, error: any) => {
-          if (error) {
-            console.error("GEE Time Series Evaluate Error:", error);
-            reject(new Error(error));
-          } else {
-            console.log("Landsat time series analysis completed successfully");
-            resolve(data);
+      if (endYear < startYear) {
+        return NextResponse.json(
+          { error: `endYear (${endYear}) is before startYear (${startYear}).` },
+          { status: 400 },
+        );
+      }
+      const span = endYear - startYear + 1;
+      if (span > 20) {
+        return NextResponse.json(
+          { error: `Requested ${span} years; the maximum is 20.` },
+          { status: 400 },
+        );
+      }
+
+      // Each year is evaluated separately rather than composing every year into
+      // one graph and evaluating it once. A combined graph runs reduceToVectors
+      // per year inside a single request and reliably exceeds Earth Engine's
+      // limits over a long span; separate calls also let one bad year degrade to
+      // a null instead of failing the whole series.
+      const years = Array.from({ length: span }, (_, i) => startYear + i);
+      const settled = await Promise.all(
+        years.map(async (y) => {
+          try {
+            return await evaluate<any>(getAdvancedLakeAreaForYear(geometry, y));
+          } catch (err) {
+            console.error(`Earth Engine failed for ${y}:`, err);
+            return { year: y, area: null, imageCount: 0, featureCount: 0, intersectingCount: 0 };
           }
-        });
-      });
+        }),
+      );
+
+      results = {
+        timeSeriesData: settled,
+        analysisStartYear: startYear,
+        analysisEndYear: endYear,
+        yearsFailed: settled.filter((d) => d.area === null).map((d) => d.year),
+      };
       
     } else {
       // Single year comparison analysis
@@ -299,9 +358,42 @@ export async function POST(request: Request) {
 
   } catch (error: any) {
     console.error("Error in Landsat GEE API route:", error);
-    return NextResponse.json({ 
-      error: "Failed to process Earth Engine request.", 
-      details: error.message 
-    }, { status: 500 });
+
+    // Distinguish "not set up" from "went wrong": the client falls back to the
+    // inventory epochs on 503, but should surface a genuine failure.
+    if (error instanceof GeeNotConfiguredError || /GEE_CREDENTIALS_JSON/.test(error?.message ?? "")) {
+      return NextResponse.json(
+        {
+          error: "Earth Engine is not configured.",
+          details: error.message,
+          hint:
+            "Create Glacier_Website_MAIN/.env.local with GEE_CREDENTIALS_JSON set to the " +
+            "full JSON of a Google Earth Engine service-account key, on one line, then restart the server.",
+          configured: false,
+        },
+        { status: 503 },
+      );
+    }
+
+    return NextResponse.json(
+      { error: "Failed to process Earth Engine request.", details: error.message },
+      { status: 500 },
+    );
+  }
+}
+
+/** GET reports whether Earth Engine is usable, without running an analysis. */
+export async function GET() {
+  if (!process.env.GEE_CREDENTIALS_JSON) {
+    return NextResponse.json(
+      { configured: false, detail: new GeeNotConfiguredError().message },
+      { status: 503 },
+    );
+  }
+  try {
+    await runGeeAuthentication();
+    return NextResponse.json({ configured: true, status: "ready" });
+  } catch (error: any) {
+    return NextResponse.json({ configured: false, detail: error.message }, { status: 503 });
   }
 }

@@ -152,15 +152,48 @@ These are excluded by `.gitignore` and are **not** in the repository. The app bu
 
 `sikkim_shape.geojson` is expected to be a GeoJSON `FeatureCollection` of lake polygons whose properties include `ID_No`, `Name`, `GL_Type`, `Area_ha`, `Elev_m`, `Basin`, `River_Syst`, `State` and `District`.
 
-### Environment variables
+### Earth Engine (optional)
 
-Create `Glacier_Website_MAIN/.env.local`:
+`/api/gee/compare-lake-area` computes lake area per year from Landsat 8/9 using
+NDWI, MNDWI, AWEIsh and AWEInsh. It is the only path to a **multi-year** time
+series, which is what Mann–Kendall needs — a significance test requires at least
+three observations, and the inventory alone provides two epochs.
+
+Everything else works without it. When it is unconfigured the route returns
+**503** and the map falls back to the measured 2016-17 → 2022 change.
+
+Check status at any time:
+
+```bash
+curl http://localhost:3000/api/gee/compare-lake-area
+# {"configured":false,...}  or  {"configured":true,"status":"ready"}
+```
+
+To enable it:
+
+1. Register for Earth Engine at <https://earthengine.google.com/signup/> and
+   note the Cloud project id.
+2. In the Google Cloud console create a **service account**, grant it the
+   *Earth Engine Resource Viewer* role, and download a **JSON key**.
+3. Register that service account at
+   <https://signup.earthengine.google.com/#!/service_accounts>.
+4. Create `Glacier_Website_MAIN/.env.local` with the **entire key file on one
+   line**:
 
 ```
-GEE_CREDENTIALS_JSON={"type":"service_account","project_id":"...","private_key":"...","client_email":"..."}
+GEE_CREDENTIALS_JSON={"type":"service_account","project_id":"...","private_key":"-----BEGIN PRIVATE KEY-----\n...","client_email":"...@....iam.gserviceaccount.com"}
 ```
 
-This is the **full JSON** of a Google Earth Engine service-account key, on one line. It powers `/api/gee/compare-lake-area`, which computes lake area per year from Landsat 8/9 using NDWI, MNDWI, AWEIsh and AWEInsh. Without it that route returns HTTP 500.
+5. Restart the dev server. `.env.local` is gitignored, so the key is not
+   committed.
+
+Authentication is cached process-wide rather than repeated per request, and a
+failed handshake is not cached so the server can recover once the key is fixed.
+Each year in a series is evaluated as its own Earth Engine call: composing many
+years into a single graph runs `reduceToVectors` per year inside one request and
+reliably exceeds Earth Engine's limits. A year that fails returns a null area and
+is listed in `yearsFailed` rather than failing the whole series. Requests are
+capped at 20 years.
 
 ---
 
@@ -404,7 +437,7 @@ around 100 people downstream. Current distribution: 65 High, 178 Moderate,
 2. **Path traversal in `server.js`.** `/downloads/reports/:filename` joins an unsanitised parameter into a filesystem path; a URL-encoded `..%2F` escapes the reports directory. This legacy Express server is superseded by the Next.js app.
 3. **Hardcoded paths in `src/*.py` and the notebooks.** `R_Hybrid.ipynb` cell 6 and the `load_inp_stack*.py` / `prefix_*.py` helpers still point at machine-specific directories. Edit before running.
 4. **The notebooks still define their own copy of the model and normalisation.** They should import from `src/model.py` so the two cannot drift apart again.
-5. **GEE route inefficiency.** `/api/gee/compare-lake-area` re-authenticates on every request, and multi-year time series build one large Earth Engine graph evaluated in a single call, which is prone to timing out.
+5. **Earth Engine is not configured**, so multi-year time series are unavailable and the map falls back to the two inventory epochs. See the Earth Engine section for setup.
 6. **Junk dependencies.** `package.json` lists `"fs"` and `"path"` as npm packages; both are Node built-ins. `express` and `cors` are pinned to `latest`.
 7. **`Glacier_Website_MAIN/requirement.txt`** lists npm package names despite its Python-style filename.
 8. **`components/MapDisplay.tsx` is dead code** that imports four GeoJSON files which do not exist.
