@@ -1424,14 +1424,19 @@ function GISMap() {
 
       {/* Toggle button for layer panel when closed */}
       {!isLayerPanelOpen && (
-        <div className="absolute left-0 top-1/2 -translate-y-1/2 z-30">
+        // Leaflet's own panes and controls sit at z-index 400-1000 (see
+        // leaflet.css), so this previously rendered at z-30 and was hidden
+        // behind the map — there was no way to reopen the panel once collapsed.
+        <div className="absolute left-0 top-1/2 -translate-y-1/2 z-[1100]">
           <Button
-            variant="outline"
+            variant="default"
             size="sm"
             onClick={() => setIsLayerPanelOpen(true)}
-            className="rounded-r-md rounded-l-none bg-white border-l-0"
+            title="Show map layers"
+            className="rounded-r-md rounded-l-none shadow-md gap-1.5 pl-2 pr-3"
           >
             <Layers className="w-4 h-4" />
+            <ChevronDown className="w-3.5 h-3.5 -rotate-90" />
           </Button>
         </div>
       )}
